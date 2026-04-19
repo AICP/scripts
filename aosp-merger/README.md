@@ -8,7 +8,7 @@ Standard Variables:
 
 `common` - Stores the following data:
 
-* `os_branch` - Previous/current LineageOS version
+* `os_branch` - Previous/current AICP version
 * `{prev_,}common_aosp_tag` - Previous/current tracked AOSP tag
 * `topic` - The name of the topic to be used when pushing merges of newer tags to [Gerrit](https://gerrit.aicp-rom.com) for review before merging
 
@@ -26,7 +26,7 @@ To merge a new AOSP tag platform-wide:
 
 2. Edit `${TOP}/.repo/manifests/default.xml` with the new main tag
 
-3. Upload `LineageOS/android` change generated to [Gerrit](https://gerrit.aicp-rom.com)
+3. Upload `AICP/android` change generated to [Gerrit](https://gerrit.aicp-rom.com)
 
 4. Execute `repo sync` on the working tree
 
@@ -36,7 +36,7 @@ To merge a new AOSP tag platform-wide:
 
 7. Once testing of the merge is completed, a global committer or higher can run `aosp-merger/aosp-merger.sh submit-platform` to push the merge of the new tag to the HEAD of all relevant forked repositories
 
-8. Directly after `submit-platform` is run, a Project Director must merge the `LineageOS/android` change on Gerrit uploaded as part of step 6 above
+8. Directly after `submit-platform` is run, a Project Director must merge the `AICP/android` change on Gerrit uploaded as part of step 6 above
 
 To merge a new CAF/CLO tag to all forked repositories:
 

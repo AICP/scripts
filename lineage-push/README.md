@@ -1,4 +1,4 @@
-# LineageOS Push Script
+# AICP Push Script
 
 ```
 usage: lineage-push.py [-h] [-a] [-b] [-d] [-e] [-f] [-l LABEL] [-m [MESSAGE]]

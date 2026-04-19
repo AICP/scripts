@@ -23,7 +23,7 @@ CUR_BRANCHES = ["lineage-23.2", "lineage-23.0", "lineage-22.2", "lineage-22.1", 
 def get_cm_dependencies(name):
     try:
         stdout = subprocess.run(
-            ["git", "ls-remote", "-h", f"https://:@github.com/LineageOS/{name}"],
+            ["git", "ls-remote", "-h", f"https://:@github.com/AICP/{name}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         ).stdout.decode()
@@ -38,7 +38,7 @@ def get_cm_dependencies(name):
 
     try:
         cmdeps = requests.get(
-            f"https://raw.githubusercontent.com/LineageOS/{name}/{branch}/lineage.dependencies"
+            f"https://raw.githubusercontent.com/AICP/{name}/{branch}/lineage.dependencies"
         ).json()
     except:
         cmdeps = []
@@ -65,7 +65,7 @@ other_repos = set()
 with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
     elements = ElementTree.fromstring(
         requests.get(
-            "https://raw.githubusercontent.com/LineageOS/mirror/main/default.xml"
+            "https://raw.githubusercontent.com/AICP/mirror/main/default.xml"
         ).text
     )
 

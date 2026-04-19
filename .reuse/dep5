@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: scripts
 Upstream-Contact: The LineageOS Project
-Source: https://github.com/LineageOS/scripts
+Source: https://github.com/AICP/scripts
 
 Files: .idea/*
 Copyright: 2023 The LineageOS Project

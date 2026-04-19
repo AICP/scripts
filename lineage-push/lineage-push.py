@@ -27,11 +27,11 @@ def push(args):
         ["git", "config", "review.gerrit.aicp-rom.com.username"]).decode("utf-8").strip()
     remotes = subprocess.check_output(
         ["git", "remote", "-v"]).decode("utf-8").strip()
-    if "github.com/LineageOS" in remotes or "git@github.com:LineageOS" in remotes:
-        repo = re.search(r'LineageOS\S+', remotes).group(0)
+    if "github.com/AICP" in remotes or "git@github.com:AICP" in remotes:
+        repo = re.search(r'AICP\S+', remotes).group(0)
     elif "android.googlesource.com" in remotes:
         repo = re.search(r'platform\S+', remotes).group(0)
-        repo = repo.replace("/", "_").replace("platform", "LineageOS/android")
+        repo = repo.replace("/", "_").replace("platform", "AICP/android")
 
     command += ' ssh://{}@gerrit.aicp-rom.com:29418/{}'.format(
         username, repo)

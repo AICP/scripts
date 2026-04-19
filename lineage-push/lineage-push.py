@@ -24,7 +24,7 @@ def push(args):
         command += ' -f'
 
     username = subprocess.check_output(
-        ["git", "config", "review.review.lineageos.org.username"]).decode("utf-8").strip()
+        ["git", "config", "review.gerrit.aicp-rom.com.username"]).decode("utf-8").strip()
     remotes = subprocess.check_output(
         ["git", "remote", "-v"]).decode("utf-8").strip()
     if "github.com/LineageOS" in remotes or "git@github.com:LineageOS" in remotes:
@@ -33,7 +33,7 @@ def push(args):
         repo = re.search(r'platform\S+', remotes).group(0)
         repo = repo.replace("/", "_").replace("platform", "LineageOS/android")
 
-    command += ' ssh://{}@review.lineageos.org:29418/{}'.format(
+    command += ' ssh://{}@gerrit.aicp-rom.com:29418/{}'.format(
         username, repo)
     command += ' HEAD:'
 

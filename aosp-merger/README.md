@@ -10,7 +10,7 @@ Standard Variables:
 
 * `os_branch` - Previous/current LineageOS version
 * `{prev_,}common_aosp_tag` - Previous/current tracked AOSP tag
-* `topic` - The name of the topic to be used when pushing merges of newer tags to [Gerrit](https://review.lineageos.org) for review before merging
+* `topic` - The name of the topic to be used when pushing merges of newer tags to [Gerrit](https://gerrit.aicp-rom.com) for review before merging
 
 Special Variables:
 
@@ -26,7 +26,7 @@ To merge a new AOSP tag platform-wide:
 
 2. Edit `${TOP}/.repo/manifests/default.xml` with the new main tag
 
-3. Upload `LineageOS/android` change generated to [Gerrit](https://review.lineageos.org)
+3. Upload `LineageOS/android` change generated to [Gerrit](https://gerrit.aicp-rom.com)
 
 4. Execute `repo sync` on the working tree
 

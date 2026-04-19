@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "108788be_cb7dc9cd",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 2
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1375
+      },
+      "writtenOn": "2026-04-19T20:50:58Z",
+      "side": 1,
+      "message": "not sure if this is relevant at all for us. we don\u0027t use those scripts. and if we change it, we chould also fit the name of the manifest repo. But I would only fix repopick and see if issues appear.",
+      "revId": "b2b5e4e49b88d6da336064b974b47df6ef7c7519",
+      "serverId": "9f904cbb-a964-4fab-a7dc-5cfc4d5c238b"
+    }
+  ]
+}

@@ -26,7 +26,7 @@ trap 'error_m interrupted!' SIGINT
 
 ### CONSTANTS ###
 readonly script_path="$(cd "$(dirname "$0")";pwd -P)"
-readonly vars_path="${script_path}/../../../vendor/lineage/vars"
+readonly vars_path="${script_path}/../../../vendor/aicp/vars"
 readonly top="${script_path}/../../.."
 
 readonly work_dir="${WORK_DIR:-/tmp/pixel}"
@@ -870,7 +870,7 @@ beautify_rro_one() {
   for d in "$@"; do
     extra_args+=("${dev_dir}/${d}/overlay")
   done
-  extra_args+=(--common vendor/lineage/overlay/rro_packages)
+  extra_args+=(--common vendor/aicp/overlay/rro_packages)
   extra_args+=(--write-meta)
 
   lineage/scripts/dev/beautify_rro.py \

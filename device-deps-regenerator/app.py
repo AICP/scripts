@@ -38,7 +38,7 @@ def get_cm_dependencies(name):
 
     try:
         cmdeps = requests.get(
-            f"https://raw.githubusercontent.com/AICP/{name}/{branch}/lineage.dependencies"
+            f"https://raw.githubusercontent.com/AICP/{name}/{branch}/aicp.dependencies"
         ).json()
     except:
         cmdeps = []

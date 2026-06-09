@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Variables
 
-`${TOP}/vendor/lineage/vars/` - This directory stores all variables for repositories that have upstreams that are regularly merged.
+`${TOP}/vendor/aicp/vars/` - This directory stores all variables for repositories that have upstreams that are regularly merged.
 
 Standard Variables:
 
@@ -35,7 +35,7 @@ To merge a new AOSP tag platform-wide:
 
 4. Execute `repo sync` on the working tree
 
-5. Edit `${TOP}/vendor/lineage/vars/common` moving the currently tracked tag from `common_aosp_tag` to `prev_common_aosp_tag`, then updating `common_aosp_tag` to reflect the newly tracked tag - lastly, update the `topic` variable to reflect the current month
+5. Edit `${TOP}/vendor/aicp/vars/common` moving the currently tracked tag from `common_aosp_tag` to `prev_common_aosp_tag`, then updating `common_aosp_tag` to reflect the newly tracked tag - lastly, update the `topic` variable to reflect the current month
 
 6. Run `aosp-merger/aosp-merger.sh`, this will take some time, and reads all the variables you set up above while merging the new tags to all relevant tracked repos. This will likely create conflicts on some forked repository, and will ask you to resolve them. It will then issue a final check to ask you if you'd like to upload the merge to gerrit, then after approval uploads the merge to Gerrit for review.
 
@@ -47,7 +47,7 @@ To merge a new CAF/CLO tag to all forked repositories:
 
 1. Fetch the latest tags for supported SoCs and current version of QSSI from https://wiki.codelinaro.org/en/clo/la/release
 
-2. Edit `vendor/lineage/vars/qcom`, `git commit` and upload the change to Gerrit
+2. Edit `vendor/aicp/vars/qcom`, `git commit` and upload the change to Gerrit
 
 3. Run the merger script on whatever platforms you have updated the tags to create merges and upload them to Gerrit - e.g. To merge on all support platforms you'd run `for platform in qssi msm8953 sdm660 sdm845 msmnile kona lahaina waipio-vendor waipio-video; do aosp-merger/aosp-merger.sh clo $platform done`
 

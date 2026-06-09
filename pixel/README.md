@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ### Variables
 
-`${TOP}/vendor/lineage/vars/` - This directory stores all variables for repositories that have upstreams that are regularly merged.
+`${TOP}/vendor/aicp/vars/` - This directory stores all variables for repositories that have upstreams that are regularly merged.
 
 Standard Variables:
 
@@ -34,7 +34,7 @@ See `../aosp-merger/README.md` for more
 
 `download.sh` - Downloads single device factory images - e.g. `download.sh raven`
 
-`update-any-var.sh` - Update any var in `vendor/lineage/vars` - e.g. `update-any-var.sh build_id TQ1A.230105.001.A2 bluejay panther`
+`update-any-var.sh` - Update any var in `vendor/aicp/vars` - e.g. `update-any-var.sh build_id TQ1A.230105.001.A2 bluejay panther`
 
 `update-device-vars.sh` - Automatically update all `$deviceName` variables of supported devices after running `download.sh`.
 

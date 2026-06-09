@@ -11,8 +11,8 @@ clean=0
 gsync=0
 supported_archs=(arm arm64 x86 x64)
 
-lineage_github=https://github.com/LineageOS
-lineage_gitlab=https://gitlab.com/LineageOS/android
+lineage_github=https://github.com/AICP
+lineage_gitlab=https://gitlab.com/AICP/android
 webview_proj_base=android_external_chromium-webview
 
 usage() {

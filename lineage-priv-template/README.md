@@ -7,8 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # Usage
 
-1. Copy to $TOP/vendor/lineage-priv/keys
-2. cd $TOP/vendor/lineage-priv/keys
+1. Copy to $TOP/vendor/aicp-priv/keys
+2. cd $TOP/vendor/aicp-priv/keys
 3. ./keys.sh
 4. Profit
 

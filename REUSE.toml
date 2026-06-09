@@ -3,8 +3,8 @@
 
 version = 1
 SPDX-PackageName = "scripts"
-SPDX-PackageSupplier = "The LineageOS Project"
-SPDX-PackageDownloadLocation = "https://github.com/LineageOS/scripts"
+SPDX-PackageSupplier = "AICP"
+SPDX-PackageDownloadLocation = "https://github.com/AICP/scripts"
 
 [[annotations]]
 path = [

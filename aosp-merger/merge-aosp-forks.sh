@@ -57,7 +57,7 @@ BRANCH="${os_branch}"
 STAGINGBRANCH="staging/${BRANCHSUFFIX}"
 
 # Build list of forked repos
-PROJECTPATHS=$(grep "name=\"LineageOS/" "${MANIFEST}" | sed -n 's/.*path="\([^"]\+\)".*/\1/p')
+PROJECTPATHS=$(grep "name=\"AICP/" "${MANIFEST}" | sed -n 's/.*path="\([^"]\+\)".*/\1/p')
 
 echo -e "\n#### Old tag = ${OLDTAG} Branch = ${BRANCH} Staging branch = ${STAGINGBRANCH} ####"
 

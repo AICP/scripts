@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "fe8b28c1_3753088e",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 4
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 343
+      },
+      "writtenOn": "2026-06-21T06:47:22Z",
+      "side": 1,
+      "message": "I do not thnk these are ready, too many glitches in there, like we do not use \"android\" folder, not even for the manifest, etc... plus I do not like building webview for example.",
+      "revId": "08be09f44c2ae4f1001934be51d8cb820680f07e",
+      "serverId": "9f904cbb-a964-4fab-a7dc-5cfc4d5c238b"
+    }
+  ]
+}

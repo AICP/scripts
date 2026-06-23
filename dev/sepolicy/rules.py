@@ -3,67 +3,9 @@
 
 from __future__ import annotations
 
-from functools import partial
-from itertools import chain
-from pathlib import Path
-from typing import List, Set
+from typing import List
 
-from sepolicy.classmap import Classmap
-from sepolicy.rule import Rule
-from sepolicy.source_rule import SourceRule
-from utils.utils import Color, color_print
-
-ALLOWED_ROOT_SYSTEM_SEPOLICY_RULES_SUBDIRS = [
-    'private',
-    'public',
-    'vendor',
-]
-
-
-def resolve_rule_paths(
-    rule_paths: List[Path],
-    system_sepolicy_path: Path,
-    verbose: bool,
-):
-    rule_file_paths: List[Path] = []
-
-    for rule_path in rule_paths:
-        if rule_path.is_file() and rule_path.suffix == '.te':
-            if verbose:
-                print(f'Loading rules: {rule_path}')
-            rule_file_paths.append(rule_path)
-            continue
-
-        if not rule_path.is_dir():
-            color_print(
-                f'Rule path {rule_path} is not a file or directory',
-                color=Color.RED,
-            )
-            continue
-
-        # --current uses the root directory, which contains a lot of .te
-        # files from other versions of the API too
-        if rule_path == system_sepolicy_path:
-            subdirs_to_scan = [
-                Path(rule_path, subdir_name)
-                for subdir_name in ALLOWED_ROOT_SYSTEM_SEPOLICY_RULES_SUBDIRS
-            ]
-        else:
-            subdirs_to_scan = [rule_path]
-
-        for file_subdir in subdirs_to_scan:
-            if verbose:
-                print(f'Loading rules from directory: {file_subdir}')
-
-            for file_path in file_subdir.rglob('*.te'):
-                if not file_path.is_file():
-                    continue
-
-                if verbose:
-                    print(file_path.relative_to(file_subdir))
-                rule_file_paths.append(file_path)
-
-    return rule_file_paths
+from utils.utils import split_normalize_text
 
 
 def split_rules(
@@ -120,16 +62,10 @@ def split_rules(
     assert not block.strip(), block
 
 
-def parse_rules(classmap: Classmap, rules: List[str]):
-    from_line_fn = partial(SourceRule.from_line, classmap=classmap)
-    decompiled_rules: List[Rule] = []
-    unique_rules: Set[Rule] = set()
+def split_normalize_rules_text(text: str):
+    # Split into lines, remove empty lines and commented lines
+    input_text_lines = split_normalize_text(text)
 
-    for rule in list(chain.from_iterable(map(from_line_fn, rules))):
-        if rule in unique_rules:
-            continue
-
-        decompiled_rules.append(rule)
-        unique_rules.add(rule)
-
-    return decompiled_rules
+    # After merging all the input files, split them into top-level
+    # macro definitions
+    return list(split_rules(input_text_lines))

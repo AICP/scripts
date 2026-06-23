@@ -4,21 +4,56 @@
 from __future__ import annotations
 
 import re
-from enum import StrEnum
-from typing import FrozenSet, Generator, List, Optional, Tuple, Union
+from functools import cache
+from typing import (
+    Dict,
+    FrozenSet,
+    Generator,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from sepolicy.class_set import ClassSet
-from sepolicy.conditional_type import IConditionalType
+from sepolicy.conditional_type import ConditionalType
+from sepolicy.varargs import (
+    Ioctls,
+    OrderedPerms,
+    Perms,
+    Types,
+    TypeTransitionTag,
+)
 
 macro_argument_regex = re.compile(r'\$(\d+)')
 
+
+@cache
+def _get_tokenizer(
+    open_char: str,
+    close_char: str,
+    separators: str,
+    ignored_chars: str,
+) -> re.Pattern[str]:
+    delimiters = open_char + close_char + separators + ignored_chars
+    pattern = (
+        f'[{re.escape(open_char + close_char)}]|[^{re.escape(delimiters)}]+'
+    )
+    return re.compile(pattern)
+
+
 raw_part = Union[str, List['raw_part']]
 raw_parts_list = List[raw_part]
-rule_part = Union[str, IConditionalType, ClassSet]
-rule_hash_value = Union[rule_part, FrozenSet[str]]
-
-
-RULE_DYNAMIC_PARTS_INDEX = 1
+rule_part = Union[str, ConditionalType, ClassSet]
+rule_hash_value = Union[
+    rule_part,
+    OrderedPerms,
+    Perms,
+    Ioctls,
+    TypeTransitionTag,
+    Types,
+]
 
 
 def is_type_generated(part: rule_part):
@@ -38,39 +73,37 @@ def unpack_line(
 ) -> raw_parts_list:
     stack: List[raw_parts_list] = []
     current: raw_parts_list = []
-    token = ''
-
-    def add_token():
-        nonlocal token
-
-        if token:
-            current.append(token)
-            token = ''
 
     if open_by_default:
         rule = f'{open_char}{rule}{close_char}'
 
-    for c in rule:
-        if c in ignored_chars:
-            continue
+    stack_append = stack.append
+    stack_pop = stack.pop
 
-        if c == open_char:
-            add_token()
-            stack.append(current)
+    tokenizer = _get_tokenizer(
+        open_char,
+        close_char,
+        separators,
+        ignored_chars,
+    )
+
+    for token in tokenizer.findall(rule):
+        if token == open_char:
+            stack_append(current)
             current = []
-        elif c == close_char:
-            add_token()
-            last = stack.pop()
+        elif token == close_char:
+            last = stack_pop()
             last.append(current)
             current = last
-        elif c in separators:
-            add_token()
         else:
-            token += c
+            current.append(token)
+
+    if not current:
+        return []
 
     assert isinstance(current[0], list)
 
-    return current[0] if current else []
+    return current[0]
 
 
 def flatten_parts(parts: raw_part) -> Generator[str, None, None]:
@@ -87,7 +120,7 @@ def flatten_parts(parts: raw_part) -> Generator[str, None, None]:
             yield part
 
 
-class RuleType(StrEnum):
+class RuleType:
     ALLOW = 'allow'
     ALLOWXPERM = 'allowxperm'
     ATTRIBUTE = 'attribute'
@@ -119,7 +152,6 @@ IOCTL_RULE_TYPES = [
     RuleType.DONTAUDITXPERM,
 ]
 
-CLASS_SETS_RULE_TYPES = ALLOW_RULE_TYPES + IOCTL_RULE_TYPES
 CONTEXTS_LABEL_START = 'u:object_r:'
 CONTEXTS_LABEL_END = ':s0'
 
@@ -130,16 +162,36 @@ def trim_contexts_label(t: str):
     return t[len(CONTEXTS_LABEL_START) : -len(CONTEXTS_LABEL_END)]
 
 
-def join_varargs(varargs: Tuple[str, ...]):
-    s = ' '.join(varargs)
+def get_class_name_perms(
+    class_name: Union[str, ClassSet],
+    class_perms: Optional[Dict[str, List[Tuple[str, Set[str]]]]] = None,
+):
+    if class_perms is None:
+        return None
 
-    if len(varargs) > 1:
-        s = '{ ' + s + ' }'
+    if isinstance(class_name, str):
+        return class_perms.get(class_name, None)
 
-    return s
+    class_name_perms = None
+    for cn in class_name:
+        cnp = class_perms.get(cn, None)
+        if class_name_perms is None:
+            class_name_perms = cnp
+        else:
+            if cnp != class_name_perms:
+                return None
+
+    return class_name_perms
 
 
-def format_rule(rule: Rule):
+def format_rule(
+    rule: Rule,
+    class_perms: Optional[Dict[str, List[Tuple[str, Set[str]]]]] = None,
+    ioctls: Optional[List[Tuple[str, Ioctls]]] = None,
+    ioctl_defines: Optional[Dict[int, str]] = None,
+    nlmsgs: Optional[List[Tuple[str, Ioctls]]] = None,
+    nlmsg_defines: Optional[Dict[int, str]] = None,
+):
     match rule.rule_type:
         case (
             RuleType.ALLOW
@@ -147,12 +199,24 @@ def format_rule(rule: Rule):
             | RuleType.AUDITALLOW
             | RuleType.DONTAUDIT
         ):
+            assert isinstance(rule.varargs, Perms)
+            assert isinstance(rule.parts[2], (str, ClassSet))
+
+            class_name = rule.parts[2]
+            class_name_perms = get_class_name_perms(
+                class_name,
+                class_perms,
+            )
+            perms_str = rule.varargs.format(
+                class_perms=class_name_perms,
+            )
+
             return '{} {} {}:{} {};'.format(
                 rule.rule_type,
                 rule.parts[0],
                 rule.parts[1],
                 rule.parts[2],
-                join_varargs(rule.varargs),
+                perms_str,
             )
         case (
             RuleType.ALLOWXPERM
@@ -160,27 +224,47 @@ def format_rule(rule: Rule):
             | RuleType.NEVERALLOWXPERM
             | RuleType.DONTAUDITXPERM
         ):
+            assert isinstance(rule.varargs, Ioctls)
+
+            if rule.parts[3] == 'ioctl':
+                varargs_str = rule.varargs.format(
+                    ioctls=ioctls,
+                    ioctl_defines=ioctl_defines,
+                )
+            elif rule.parts[3] == 'nlmsg':
+                varargs_str = rule.varargs.format(
+                    ioctls=nlmsgs,
+                    ioctl_defines=nlmsg_defines,
+                )
+            else:
+                assert False, rule
+
             return '{} {} {}:{} {} {};'.format(
                 rule.rule_type,
                 rule.parts[0],
                 rule.parts[1],
                 rule.parts[2],
                 rule.parts[3],
-                join_varargs(rule.varargs),
+                varargs_str,
             )
         case RuleType.TYPE:
-            varargs = sorted(rule.varargs)
-            assert isinstance(rule.parts[0], str)
-            parts = (rule.parts[0], *varargs)
-            parts_str = ', '.join(parts)
-            return '{} {};'.format(rule.rule_type, parts_str)
-        case RuleType.TYPE_TRANSITION:
-            assert len(rule.varargs) in [0, 1]
-
-            if len(rule.varargs) == 1:
-                name = f'{list(rule.varargs)[0]} '
+            if isinstance(rule.varargs, Types):
+                types_str = str(rule.varargs)
             else:
+                types_str = ''
+
+            return '{} {}{};'.format(
+                rule.rule_type,
+                rule.parts[0],
+                types_str,
+            )
+        case RuleType.TYPE_TRANSITION:
+            if isinstance(rule.varargs, TypeTransitionTag):
+                name = f'{rule.varargs} '
+            elif rule.varargs is None:
                 name = ''
+            else:
+                assert False
 
             return '{} {} {}:{} {}{};'.format(
                 rule.rule_type,
@@ -217,26 +301,49 @@ class Rule:
         self,
         rule_type: str,
         parts: Tuple[rule_part, ...],
-        varargs: Tuple[str, ...],
+        varargs: Optional[
+            Union[
+                Perms,
+                OrderedPerms,
+                Ioctls,
+                TypeTransitionTag,
+                Types,
+            ]
+        ] = None,
         is_macro: bool = False,
+        expanded_rules: Optional[FrozenSet[Rule]] = None,
     ):
         self.rule_type = rule_type
         self.parts = parts
-        self.varargs = tuple(sorted(varargs))
+        self.varargs = varargs
         self.is_macro = is_macro
-        self.varargs_hash_value = frozenset(varargs)
-        self.hash_values: Tuple[rule_hash_value, ...] = (
+        self.expanded_rules = expanded_rules
+        self.hash_values: Tuple[Optional[rule_hash_value], ...] = (
             self.rule_type,
             *self.parts,
-            frozenset(varargs),
+            varargs,
         )
-
-        # Postpone hash calculation so that ConditionalTypes are fully
-        # gathered and ConditionalTypeRedirect can find them
-        self.__hash: Optional[int] = None
+        self.__hash = hash(self.hash_values)
 
     def __str__(self):
         return format_rule(self)
+
+    def format(
+        self,
+        class_perms: Optional[Dict[str, List[Tuple[str, Set[str]]]]],
+        ioctls: Optional[List[Tuple[str, Ioctls]]],
+        ioctl_defines: Optional[Dict[int, str]],
+        nlmsgs: Optional[List[Tuple[str, Ioctls]]],
+        nlmsg_defines: Optional[Dict[int, str]],
+    ):
+        return format_rule(
+            self,
+            class_perms=class_perms,
+            ioctls=ioctls,
+            ioctl_defines=ioctl_defines,
+            nlmsgs=nlmsgs,
+            nlmsg_defines=nlmsg_defines,
+        )
 
     def __eq__(self, other: object):
         assert isinstance(other, Rule)
@@ -244,9 +351,6 @@ class Rule:
         return self.hash_values == other.hash_values
 
     def __hash__(self):
-        if self.__hash is None:
-            self.__hash = hash(self.hash_values)
-
         return self.__hash
 
 
@@ -257,17 +361,77 @@ def rule_type_order(rule: Rule):
         return -2
     elif rule.rule_type == RuleType.TYPEATTRIBUTE:
         return -1
-    elif rule.is_macro:
-        return 0
     else:
         return 1
 
 
-def rule_sort_key(rule: Rule):
-    compare_values: List[Union[rule_part, Tuple[str, ...]]] = [
-        rule.rule_type,
-        *rule.parts,
-        rule.varargs,
-    ]
+def _rule_used_types(rule: Rule, used_types: Set[str]):
+    def handle_type(t: rule_part):
+        if isinstance(t, str):
+            used_types.add(t)
+        elif isinstance(t, ConditionalType):
+            for p in t.positive:
+                used_types.add(p)
+            for n in t.negative:
+                used_types.add(n)
 
-    return (rule_type_order(rule), *(str(h) for h in compare_values))
+    match rule.rule_type:
+        case (
+            RuleType.ALLOW
+            | RuleType.NEVERALLOW
+            | RuleType.AUDITALLOW
+            | RuleType.DONTAUDIT
+            | RuleType.ALLOWXPERM
+            | RuleType.NEVERALLOWXPERM
+            | RuleType.AUDITALLOWXPERM
+            | RuleType.DONTAUDITXPERM
+            | RuleType.TYPE_TRANSITION
+        ):
+            handle_type(rule.parts[0])
+            handle_type(rule.parts[1])
+        case RuleType.GENFSCON:
+            handle_type(rule.parts[2])
+        case RuleType.TYPE | RuleType.TYPEATTRIBUTE:
+            pass
+        case RuleType.ATTRIBUTE | RuleType.EXPANDATTRIBUTE:
+            # TODO: figure out if these should be taken into account
+            pass
+        case _:
+            assert False, rule
+
+
+def rule_used_types(rule: Rule):
+    used_types: Set[str] = set()
+
+    if rule.is_macro:
+        assert rule.expanded_rules is not None
+        for r in rule.expanded_rules:
+            _rule_used_types(r, used_types)
+    else:
+        _rule_used_types(rule, used_types)
+
+    return used_types
+
+
+def _rule_defined_types(
+    rule: Rule,
+    defined_types: Set[str],
+):
+    if rule.rule_type != RuleType.TYPE:
+        return None
+
+    assert isinstance(rule.parts[0], str)
+    defined_types.add(rule.parts[0])
+
+
+def rule_defined_types(rule: Rule):
+    defined_types: Set[str] = set()
+
+    if rule.is_macro:
+        assert rule.expanded_rules is not None
+        for r in rule.expanded_rules:
+            _rule_defined_types(r, defined_types)
+    else:
+        _rule_defined_types(rule, defined_types)
+
+    return defined_types

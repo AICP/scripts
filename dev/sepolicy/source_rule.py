@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import List, Optional, Set
+from typing import Callable, Dict, List, Set, Tuple
 
 from sepolicy.classmap import Classmap
 from sepolicy.conditional_type import ConditionalType
@@ -13,15 +13,19 @@ from sepolicy.rule import (
     RuleType,
     flatten_parts,
     raw_part,
-    raw_parts_list,
     trim_contexts_label,
     unpack_line,
 )
+from sepolicy.varargs import Ioctls, Perms, TypeTransitionTag
 
 
 def trim_ioctl(ioctl: int):
     # Only keep bottom two bytes for type and number
     return ioctl & 0xFFFF
+
+
+def trim_ioctl_str(ioctl_str: str):
+    return trim_ioctl(int(ioctl_str, base=0))
 
 
 def format_ioctl(ioctl: int):
@@ -32,41 +36,43 @@ def format_ioctl_str(ioctl_str: str):
     return format_ioctl(int(ioctl_str, base=0))
 
 
-def unpack_ioctls(ioctls: List[str], negative_ioctls: bool = False):
-    if negative_ioctls:
-        missing_ioctls = set(trim_ioctl(int(i, base=0)) for i in ioctls)
+def unpack_negative_ioctls(ioctls: List[str]):
+    ranges: List[Tuple[int, int]] = []
 
-        # TODO: maybe do not expand ranges
-        for n in range(0x0000, 0x10000):
-            if n in missing_ioctls:
-                continue
+    missing = sorted(trim_ioctl_str(i) for i in ioctls)
 
-            yield format_ioctl(n)
+    prev = -1
+    for m in missing:
+        if m < prev:
+            raise ValueError('missing ioctls must be sorted and unique')
 
-        return
+        if prev + 1 <= m - 1:
+            ranges.append((prev + 1, m - 1))
+
+        prev = m
+
+    if prev < 0xFFFF:
+        ranges.append((prev + 1, 0xFFFF))
+
+    return Ioctls(ranges)
+
+
+def unpack_ioctls(ioctls: List[str]):
+    ranges: List[Tuple[int, int]] = []
 
     for part in ioctls:
         if '-' not in part:
-            yield format_ioctl(int(part, base=0))
+            value = trim_ioctl(int(part, base=0))
+            ranges.append((value, value))
             continue
 
-        parts = part.split('-', 1)
-        start_ioctl = int(parts[0], base=0)
-        end_ioctl = int(parts[1], base=0)
+        start_s, end_s = part.split('-', 1)
+        start = trim_ioctl(int(start_s, base=0))
+        end = trim_ioctl(int(end_s, base=0))
 
-        # TODO: maybe do not expand ranges
-        for n in range(start_ioctl, end_ioctl + 1):
-            yield format_ioctl(n)
+        ranges.append((start, end))
 
-
-# TODO: implement this properly by allowing macros to have conditional
-# rules based on input params
-def is_allow_process_sigchld(parts: raw_parts_list):
-    return (
-        parts[0] == RuleType.ALLOW
-        and len(parts) == 5
-        and parts[3:] == ['process', 'sigchld']
-    )
+    return Ioctls(ranges)
 
 
 def structure_conditional_types(parts: raw_part, all_negatives: bool = False):
@@ -121,10 +127,20 @@ unknown_rule_types: Set[str] = set(
     ]
 )
 
+ALL_PERMS_SET = {'*'}
 
-class SourceRule(Rule):
-    @classmethod
-    def genfscon_from_line(cls, line: str):
+
+class SourceRuleParser:
+    def __init__(
+        self,
+        add_rule: Callable[[Rule], None],
+        classmap: Classmap,
+    ):
+        self.add_rule = add_rule
+        self.classmap = classmap
+
+    @staticmethod
+    def genfscon_from_line(line: str):
         parts = unpack_line(
             line,
             '{',
@@ -144,45 +160,48 @@ class SourceRule(Rule):
         rule = Rule(
             parts[0],
             (parts[1], parts[2], t),
-            (),
         )
         return rule
 
-    @classmethod
-    def from_line(cls, line: str, classmap: Optional[Classmap]) -> List[Rule]:
+    def parse_line(self, line: str):
         parts = unpack_line(
             line,
             '{',
             '}',
-            ' :,',
+            ' \n:,',
             open_by_default=True,
             ignored_chars=';',
         )
         if not parts:
-            return []
+            return
 
         if not isinstance(parts[0], str) or len(parts) == 1:
             raise ValueError(f'Invalid line: {line}')
 
         if parts[0] in unknown_rule_types:
-            return []
-
-        # Remove allow $3 $1:process sigchld as it is part of an ifelse
-        # statement based on one of the parameters and it is not possible
-        # to generate the checks for it as part of macro expansion
-        if is_allow_process_sigchld(parts):
-            return []
-
-        rules: List[Rule] = []
+            return
 
         match parts[0]:
             case (
-                RuleType.ALLOW.value
-                | RuleType.NEVERALLOW.value
-                | RuleType.AUDITALLOW.value
-                | RuleType.DONTAUDIT.value
+                RuleType.ALLOW
+                | RuleType.NEVERALLOW
+                | RuleType.AUDITALLOW
+                | RuleType.DONTAUDIT
             ):
-                # neverallow ~{ a b }:d e;
+                # Remove allow $3 $1:process sigchld as it is part of an ifelse
+                # statement based on one of the parameters and it is not
+                # possible to generate the checks for it as part of macro
+                # expansion
+                # TODO: implement this properly by allowing macros to have
+                # conditional rules based on input params
+                if (
+                    len(parts) == 5
+                    and parts[3] == 'process'
+                    and parts[4] == 'sigchld'
+                ):
+                    return
+
+                # neverallow ~{ a b } c:d e;
                 negative_srcs = False
                 if len(parts) > 5 and parts[1] == '~':
                     negative_srcs = True
@@ -214,25 +233,34 @@ class SourceRule(Rule):
                 srcs = structure_conditional_types(parts[1], negative_srcs)
                 dsts = structure_conditional_types(parts[2], negative_dsts)
                 class_names = list(flatten_parts(parts[3]))
-                varargs = list(flatten_parts(parts[4]))
+                varargs = set(flatten_parts(parts[4]))
+                is_all = varargs == ALL_PERMS_SET
 
-                for src, dst, class_name in product(srcs, dsts, class_names):
-                    class_varargs = varargs
-                    if varargs == ['*'] or negative_varargs:
-                        assert classmap is not None
-                        class_varargs = classmap.class_perms(class_name)
+                class_varargs_map: Dict[str, Perms] = {}
+
+                for class_name in class_names:
+                    class_perms_set = self.classmap.class_perms_set(class_name)
 
                     if negative_varargs:
-                        for v in varargs:
-                            class_varargs.remove(v)
+                        class_varargs = class_perms_set - varargs
+                        class_is_all = False
+                    elif is_all:
+                        class_varargs = class_perms_set
+                        class_is_all = True
+                    else:
+                        class_varargs = varargs
+                        class_is_all = class_varargs == class_perms_set
 
+                    class_varargs_map[class_name] = Perms(class_varargs, class_is_all)
+
+                for src, dst, class_name in product(srcs, dsts, class_names):
                     rule = Rule(
                         parts[0],
                         (src, dst, class_name),
-                        tuple(class_varargs),
+                        class_varargs_map[class_name],
                     )
-                    rules.append(rule)
-            case RuleType.TYPE_TRANSITION.value:
+                    self.add_rule(rule)
+            case RuleType.TYPE_TRANSITION:
                 assert len(parts) in [5, 6], line
                 assert isinstance(parts[4], str), line
 
@@ -244,58 +272,57 @@ class SourceRule(Rule):
                 if len(parts) == 6:
                     assert isinstance(parts[5], str), line
                     # assert parts[5] == '"[userfaultfd]"', line
-                    varargs = [parts[5]]
+                    tag = TypeTransitionTag(parts[5])
                 else:
-                    varargs = []
+                    tag = None
 
                 for src, dst, class_name in product(srcs, dsts, class_names):
                     rule = Rule(
                         parts[0],
                         (src, dst, class_name, parts[4]),
-                        tuple(varargs),
+                        tag,
                     )
-                    rules.append(rule)
+                    self.add_rule(rule)
             case (
-                RuleType.ALLOWXPERM.value
+                RuleType.ALLOWXPERM
                 | RuleType.AUDITALLOWXPERM
-                | RuleType.NEVERALLOWXPERM.value
-                | RuleType.DONTAUDITXPERM.value
+                | RuleType.NEVERALLOWXPERM
+                | RuleType.DONTAUDITXPERM
             ):
-                # neverallowxperm a b:c ioctl ~{ d };
-                negative_ioctls = False
-                if len(parts) > 6 and parts[5] == '~':
-                    negative_ioctls = True
-                    del parts[5]
-
-                assert len(parts) == 6
+                assert len(parts) in (6, 7), line
                 assert isinstance(parts[4], str), line
+
+                # neverallowxperm a b:c ioctl ~{ d };
+                if len(parts) > 6 and parts[5] == '~':
+                    varargs = list(flatten_parts(parts[6]))
+                    ioctls = unpack_negative_ioctls(varargs)
+                else:
+                    varargs = list(flatten_parts(parts[5]))
+                    ioctls = unpack_ioctls(varargs)
 
                 srcs = structure_conditional_types(parts[1])
                 dsts = structure_conditional_types(parts[2])
                 class_names = flatten_parts(parts[3])
                 ioctl_or_nlmsg = parts[4]
-                varargs = list(flatten_parts(parts[5]))
-                ioctls = list(unpack_ioctls(varargs, negative_ioctls))
 
                 for src, dst, class_name in product(srcs, dsts, class_names):
                     rule = Rule(
                         parts[0],
                         (src, dst, class_name, ioctl_or_nlmsg),
-                        tuple(ioctls),
+                        ioctls,
                     )
-                    rules.append(rule)
+                    self.add_rule(rule)
 
-            case RuleType.ATTRIBUTE.value:
+            case RuleType.ATTRIBUTE:
                 assert len(parts) == 2, line
                 assert isinstance(parts[1], str), line
 
                 rule = Rule(
                     parts[0],
                     (parts[1],),
-                    (),
                 )
-                return [rule]
-            case RuleType.TYPEATTRIBUTE.value:
+                self.add_rule(rule)
+            case RuleType.TYPEATTRIBUTE:
                 assert isinstance(parts[1], str), line
 
                 for t in parts[2:]:
@@ -303,30 +330,27 @@ class SourceRule(Rule):
                     rule = Rule(
                         parts[0],
                         (parts[1], t),
-                        (),
                     )
-                    rules.append(rule)
-            case RuleType.TYPE.value:
+                    self.add_rule(rule)
+            case RuleType.TYPE:
                 assert isinstance(parts[1], str), line
 
                 rule = Rule(
-                    RuleType.TYPE.value,
+                    RuleType.TYPE,
                     (parts[1],),
-                    (),
                 )
-                rules.append(rule)
+                self.add_rule(rule)
 
                 # Convert type rules to typeattribute to allow easy matching
                 # with split typeattributeset rules
                 for t in parts[2:]:
                     assert isinstance(t, str)
                     rule = Rule(
-                        RuleType.TYPEATTRIBUTE.value,
+                        RuleType.TYPEATTRIBUTE,
                         (parts[1], t),
-                        (),
                     )
-                    rules.append(rule)
-            case RuleType.EXPANDATTRIBUTE.value:
+                    self.add_rule(rule)
+            case RuleType.EXPANDATTRIBUTE:
                 assert len(parts) == 3
                 assert isinstance(parts[1], str), line
                 assert isinstance(parts[2], str), line
@@ -334,10 +358,7 @@ class SourceRule(Rule):
                 rule = Rule(
                     parts[0],
                     (parts[1], parts[2]),
-                    (),
                 )
-                rules.append(rule)
+                self.add_rule(rule)
             case _:
                 assert False, line
-
-        return rules

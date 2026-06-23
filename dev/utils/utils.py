@@ -7,7 +7,9 @@ import os
 import re
 from contextlib import contextmanager
 from enum import StrEnum
+from fnmatch import fnmatch
 from os import path
+from pathlib import Path
 from subprocess import PIPE, run
 from typing import Generator, List, Optional, Set
 
@@ -79,30 +81,33 @@ def color_print(*args: object, color: Color):
     print(args_str)
 
 
-def remove_comments(line: str):
-    index = line.find('#')
-    if index != -1:
-        line = line[:index]
-
-    return line
-
-
-def squash_spaces(line: str):
-    line = line.lstrip()
-    return re.sub(r'[ \t]+', ' ', line)
+def read_texts(text_file_paths: List[Path]):
+    texts: List[str] = []
+    for text_file_path in text_file_paths:
+        text = text_file_path.read_text()
+        texts.append(text)
+        texts.append('\n')
+    return ''.join(texts)
 
 
-def is_empty_line(line: str):
-    return not line.strip()
+SPACE_RE = re.compile(r'[ \t]+')
 
 
 def split_normalize_text(text: str):
-    lines = text.splitlines(keepends=True)
-    lines = list(map(remove_comments, lines))
-    lines = list(map(squash_spaces, lines))
-    lines = list(filter(lambda line: not is_empty_line(line), lines))
-    return lines
+    out: list[str] = []
 
+    for line in text.splitlines(keepends=True):
+        comment_index = line.find('#')
+
+        if comment_index != -1:
+            line = line[:comment_index]
+
+        line = SPACE_RE.sub(' ', line.lstrip())
+
+        if line.strip():
+            out.append(line)
+
+    return out
 
 @contextmanager
 def WorkingDirectory(dir_path: str) -> Generator[None, None, None]:
@@ -114,3 +119,46 @@ def WorkingDirectory(dir_path: str) -> Generator[None, None, None]:
         yield
     finally:
         os.chdir(cwd)
+
+
+def resolve_paths(
+    dir_paths: List[Path],
+    names: Set[str],
+    recursive: bool,
+    paths_name: str,
+    verbose: bool,
+):
+    resolved_paths: List[Path] = []
+
+    def add_path(mp: Path):
+        if not mp.is_file():
+            return
+
+        for name in names:
+            if mp.name == name or fnmatch(mp.name, name):
+                break
+        else:
+            return
+
+        if verbose:
+            print(f'Loading {paths_name}: {mp}')
+
+        resolved_paths.append(mp)
+
+    for dir_path in dir_paths:
+        if dir_path.is_file():
+            add_path(dir_path)
+            continue
+
+        assert dir_path.is_dir(), f'{dir_path} is not a file or directory'
+
+        if recursive:
+            for root, _, files in dir_path.walk():
+                for file in files:
+                    file_path = root / file
+                    add_path(file_path)
+        else:
+            for file_path in dir_path.iterdir():
+                add_path(file_path)
+
+    return resolved_paths

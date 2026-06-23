@@ -5,10 +5,14 @@ from typing import List
 
 
 class ClassSet:
-    def __init__(self, values: List[str]):
+    def __init__(self, names: List[str], values: List[str]):
+        self.__names = names
         self.__values = values
         self.__hash_values = frozenset(values)
         self.__hash = hash(self.__hash_values)
+
+    def __iter__(self):
+        return iter(self.__values)
 
     def __eq__(self, other: object):
         if not isinstance(other, ClassSet):
@@ -23,7 +27,7 @@ class ClassSet:
         return self.__hash
 
     def __str__(self):
-        sorted_values = sorted(self.__values)
+        sorted_values = sorted(self.__names)
         if len(sorted_values) == 1:
             return sorted_values[0]
 

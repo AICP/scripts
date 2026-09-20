@@ -650,7 +650,7 @@ def do_git_fetch_pull(args, item):
         if args.verbose:
             print("Trying to fetch the change from GitHub")
 
-        cmd[-2] = "github"
+        cmd[-2] = "aicp"
         if not args.quiet:
             print(cmd)
         result = subprocess.call(cmd, cwd=project_path)

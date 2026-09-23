@@ -16,6 +16,24 @@
       "message": "did you face any issues with this? Or what exactly does it fix?",
       "revId": "00ad31cd11df996ee52ae18a139dddb7abf62fe7",
       "serverId": "9f904cbb-a964-4fab-a7dc-5cfc4d5c238b"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "06f2a95c_a434bfa9",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 2103
+      },
+      "writtenOn": "2026-09-23T05:53:51Z",
+      "side": 1,
+      "message": "Well it lets you fetch from the aicp github for repopick instead of relying on gerrit for every pull. Functionality wise it didnt fix anything iirc.",
+      "parentUuid": "b340ce52_0a015417",
+      "revId": "00ad31cd11df996ee52ae18a139dddb7abf62fe7",
+      "serverId": "9f904cbb-a964-4fab-a7dc-5cfc4d5c238b"
     }
   ]
 }

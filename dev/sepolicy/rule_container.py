@@ -15,7 +15,6 @@ from typing import (
     Optional,
     Sequence,
     Set,
-    Tuple,
     Union,
 )
 
@@ -50,10 +49,8 @@ class RuleContainer:
         self,
         iterable: Optional[Iterable[Rule]] = None,
     ):
-        self.__all_data: Dict[Rule, Tuple[Hashable, ...]] = {}
+        self.__all_data: Dict[Rule, None] = {}
         self.__marks: DefaultDict[Rule, Set[LineMark]] = defaultdict(set)
-        self.__by_file: DefaultDict[str, Set[Rule]] = defaultdict(set)
-        self.__by_file_line: DefaultDict[LineMark, Set[Rule]] = defaultdict(set)
         self.__index: Optional[MatchIndex] = None
 
         if iterable is not None:
@@ -84,24 +81,13 @@ class RuleContainer:
         return result
 
     def add(self, value: Rule, marks: Optional[Iterable[LineMark]] = None):
-        keys = value.hash_values
-
         if marks:
-            rule_marks = self.__marks[value]
-            for mark in marks:
-                if mark in rule_marks:
-                    continue
+            self.__marks[value].update(marks)
 
-                rule_marks.add(mark)
-                self.__by_file[mark.path].add(value)
-                self.__by_file_line[mark].add(value)
-
-        existing = self.__all_data.get(value)
-        if existing is not None:
-            assert existing == keys
+        if value in self.__all_data:
             return
 
-        self.__all_data[value] = keys
+        self.__all_data[value] = None
         self.__index = None
 
     def add_many(self, values: Iterable[Rule]):
@@ -116,23 +102,10 @@ class RuleContainer:
         if optional and value not in self.__all_data:
             return False
 
-        keys = value.hash_values
-
         assert value in self.__all_data, value
-        assert self.__all_data[value] == keys, value
 
         del self.__all_data[value]
-
-        for mark in self.__marks.pop(value, ()):
-            file_rules = self.__by_file[mark.path]
-            file_rules.discard(value)
-            if not file_rules:
-                del self.__by_file[mark.path]
-
-            line_rules = self.__by_file_line[mark]
-            line_rules.discard(value)
-            if not line_rules:
-                del self.__by_file_line[mark]
+        self.__marks.pop(value, None)
 
         self.__index = None
 
@@ -151,12 +124,6 @@ class RuleContainer:
     def marks(self, value: Rule) -> AbstractSet[LineMark]:
         return self.__marks.get(value, frozenset())
 
-    def group_by_file(self) -> DefaultDict[str, Set[Rule]]:
-        return self.__by_file
-
-    def group_by_file_line(self) -> DefaultDict[LineMark, Set[Rule]]:
-        return self.__by_file_line
-
     def __build_index(self):
         self.__index = defaultdict(
             lambda: defaultdict(
@@ -164,7 +131,8 @@ class RuleContainer:
             ),
         )
 
-        for value, keys in self.__all_data.items():
+        for value in self.__all_data:
+            keys = value.hash_values
             levels_data = self.__index[len(keys)]
             for i, k in enumerate(keys):
                 levels_data[i][k][value] = None
@@ -191,18 +159,12 @@ class RuleContainer:
             return []
 
         buckets: List[Dict[Rule, None]] = []
-        saw_not_none = False
 
         for i, key in enumerate(keys):
             if key is None:
                 continue
 
-            saw_not_none = True
-
-            position_data = levels_data.get(i)
-            if position_data is None:
-                return []
-
+            position_data = levels_data[i]
             if isinstance(key, AbstractSet):
                 merged: Dict[Rule, None] = {}
                 for value in key:
@@ -219,7 +181,7 @@ class RuleContainer:
                 buckets.append(bucket)
 
         # Querries that are only None are not allowed
-        assert saw_not_none
+        assert buckets
 
         buckets.sort(key=len)
         smallest_bucket = buckets[0]

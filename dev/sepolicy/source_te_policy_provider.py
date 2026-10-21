@@ -75,7 +75,7 @@ class SourceTePolicyProvider(PolicyProvider):
         macros: bool,
     ):
         assert isinstance(policy_type.origin, PolicySourceOrigin)
-        dir_paths: List[Tuple[Path, str]] = []
+        dir_paths: List[Path] = []
 
         def add_subdirs(subdirs: Tuple[Tuple[str, bool], ...]):
             for subdir, versioned in subdirs:
@@ -88,28 +88,20 @@ class SourceTePolicyProvider(PolicyProvider):
                 if not dir_path.exists():
                     continue
 
-                dir_paths.append((dir_path, policy_type.name))
-
-        if macros and policy_type.origin.macros_subdirs is not None:
-            add_subdirs(policy_type.origin.macros_subdirs)
-        elif not macros and policy_type.origin.rules_subdirs is not None:
-            add_subdirs(policy_type.origin.rules_subdirs)
+                dir_paths.append(dir_path)
 
         if macros:
-            extras = self.__extra_macros_paths
+            add_subdirs(policy_type.origin.macros_subdirs)
         else:
-            extras = self.__extra_rules_paths
-
-        def add_extras(policy_name: Optional[str]):
-            if policy_name not in extras:
-                return
-
-            dir_paths.extend((e, policy_type.name) for e in extras[policy_name])
-
-        add_extras(None)
-        add_extras(policy_type.name)
+            add_subdirs(policy_type.origin.rules_subdirs)
 
         return dir_paths
+
+    def __extras(self, macros: bool):
+        if macros:
+            return self.__extra_macros_paths
+
+        return self.__extra_rules_paths
 
     def __get_policy_all_paths(
         self,
@@ -119,25 +111,23 @@ class SourceTePolicyProvider(PolicyProvider):
     ):
         assert isinstance(policy_type.origin, PolicySourceOrigin)
 
-        dir_paths: List[Tuple[Path, str]] = []
+        dir_paths: List[Path] = []
 
         if macros:
             # flagging_macros are not versioned and must always be loaded
-            dir_path = Path(system_sepolicy_path, 'flagging')
-            dir_paths.append((dir_path, policy_type.name))
+            dir_paths.append(Path(system_sepolicy_path, 'flagging'))
 
-        sources = None
-        if macros and policy_type.origin.macro_sources:
-            sources = policy_type.origin.macro_sources
+        extras = self.__extras(macros)
 
-        if sources is not None:
-            for source_policy_type in sources:
+        if macros:
+            for source_policy_type in policy_type.origin.macro_sources:
                 source_macro_paths = self.__get_policy_dir_paths(
                     source_policy_type,
                     version,
                     macros,
                 )
                 dir_paths.extend(source_macro_paths)
+                dir_paths.extend(extras.get(source_policy_type.name, ()))
 
         own_dir_paths = self.__get_policy_dir_paths(
             policy_type,
@@ -145,17 +135,10 @@ class SourceTePolicyProvider(PolicyProvider):
             macros,
         )
         dir_paths.extend(own_dir_paths)
+        dir_paths.extend(extras.get(None, ()))
+        dir_paths.extend(extras.get(policy_type.name, ()))
 
         return dir_paths
-
-    def __get_policy_key_paths(
-        self,
-        policy_type: PolicyType,
-        version: str,
-        macros: bool,
-    ):
-        dir_paths = self.__get_policy_all_paths(policy_type, version, macros)
-        return tuple(v[0] for v in dir_paths)
 
     def __get_macro_dir_paths(
         self,
@@ -169,10 +152,12 @@ class SourceTePolicyProvider(PolicyProvider):
             return macro_dir_paths
 
         policy_type = get_policy_type_by_name(policy_name)
-        macro_dir_paths = self.__get_policy_key_paths(
-            policy_type,
-            version=metadata.version,
-            macros=True,
+        macro_dir_paths = tuple(
+            self.__get_policy_all_paths(
+                policy_type,
+                version=metadata.version,
+                macros=True,
+            )
         )
 
         self.__macro_dir_paths_index[key] = macro_dir_paths
@@ -266,22 +251,6 @@ class SourceTePolicyProvider(PolicyProvider):
 
         return source_text, classmap, macros
 
-    def get_macros(self, metadata: PolicyMetadata, policy_name: str):
-        _, _, macros = self.__parse_macros(metadata, policy_name)
-        return macros
-
-    def get_macros_source_text(
-        self,
-        metadata: PolicyMetadata,
-        policy_name: str,
-    ):
-        source_text, _, _ = self.__parse_macros(metadata, policy_name)
-        return source_text
-
-    def get_classmap(self, metadata: PolicyMetadata, policy_name: str):
-        _, classmap, _ = self.__parse_macros(metadata, policy_name)
-        return classmap
-
     def get_policy(
         self,
         policy_index: PolicyIndex,
@@ -307,13 +276,14 @@ class SourceTePolicyProvider(PolicyProvider):
             macros=False,
         )
 
-        source_text = self.get_macros_source_text(metadata, policy_type.name)
+        source_text, classmap, macros = self.__parse_macros(
+            metadata,
+            policy_type.name,
+        )
 
         # Avoid mutating the original source text which might end up being
         # used by other policies
         source_text = source_text.copy()
-
-        classmap = self.get_classmap(metadata, policy_type.name)
 
         policy = parse_metadata_source_policies(
             rules_dir_paths,
@@ -324,6 +294,6 @@ class SourceTePolicyProvider(PolicyProvider):
             verbose=self.__verbose,
         )
 
-        policy.macros = self.get_macros(metadata, policy_type.name)
+        policy.macros = macros
 
         return policy

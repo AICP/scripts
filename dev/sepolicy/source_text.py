@@ -65,6 +65,24 @@ POLICY_ORDER_MAP = {
 }
 
 
+def policy_file_type(policy_path: Path):
+    if policy_path.name.endswith('.te'):
+        return PolicyFileType.TE
+
+    return POLICY_ORDER_MAP.get(policy_path.stem)
+
+
+def is_type_selected(
+    order: int,
+    allowed_types: Optional[Set[PolicyFileType]],
+    disallowed_types: Optional[Set[PolicyFileType]],
+):
+    if allowed_types is not None and order not in allowed_types:
+        return False
+
+    return disallowed_types is None or order not in disallowed_types
+
+
 @dataclass
 class SourceText:
     paths: DefaultDict[int, List[Path]] = field(
@@ -93,10 +111,7 @@ class SourceText:
         disallowed_types: Optional[Set[PolicyFileType]] = None,
     ):
         for order, paths in other.paths.items():
-            if allowed_types is not None and order not in allowed_types:
-                continue
-
-            if disallowed_types is not None and order in disallowed_types:
+            if not is_type_selected(order, allowed_types, disallowed_types):
                 continue
 
             for path in paths:
@@ -107,26 +122,17 @@ class SourceText:
                 self.paths[order].append(path)
                 self.texts[path] = other.texts[path]
 
-    def __policy_type(self, policy_path: Path):
-        if policy_path.name.endswith('.te'):
-            return PolicyFileType.TE
-
-        return POLICY_ORDER_MAP.get(policy_path.stem)
-
     def __add_path(
         self,
         policy_path: Path,
         allowed_types: Optional[Set[PolicyFileType]] = None,
         disallowed_types: Optional[Set[PolicyFileType]] = None,
     ):
-        order = self.__policy_type(policy_path)
+        order = policy_file_type(policy_path)
         if order is None:
             return
 
-        if allowed_types is not None and order not in allowed_types:
-            return
-
-        if disallowed_types is not None and order in disallowed_types:
+        if not is_type_selected(order, allowed_types, disallowed_types):
             return
 
         text = policy_path.read_text()
@@ -163,12 +169,10 @@ class SourceText:
 
         return all_texts
 
-    def get_text(self, t: PolicyFileType):
-        texts = self.get_texts({t})
-        assert len(texts) == 1
-        return next(iter(texts))
-
     def get_path(self, t: PolicyFileType):
         file_paths = self.paths[t]
         assert len(file_paths) == 1
-        return next(iter(file_paths))
+        return file_paths[0]
+
+    def get_text(self, t: PolicyFileType):
+        return self.texts[self.get_path(t)]

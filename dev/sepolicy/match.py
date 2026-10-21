@@ -9,6 +9,7 @@ from typing import (
     Dict,
     FrozenSet,
     Hashable,
+    Iterable,
     List,
     Optional,
     Set,
@@ -16,6 +17,7 @@ from typing import (
 )
 
 from sepolicy.class_set import ClassSet
+from sepolicy.macro import ArgCondition, MacroVariant
 from sepolicy.match_template import (
     ArgValues,
     RuleTemplate,
@@ -47,13 +49,6 @@ class RuleMatch:
         self.macro_name = macro_name
         self.rules = rules
         self.arg_values = arg_values
-
-        self.__hash_values = (
-            self.macro_name,
-            self.arg_values,
-            rules,
-        )
-        self.__hash = hash(self.__hash_values)
         self.__macro: Optional[Rule] = None
 
     @property
@@ -69,15 +64,6 @@ class RuleMatch:
             self.__macro = macro
 
         return macro
-
-    def __hash__(self):
-        return self.__hash
-
-    def __eq__(self, other: object):
-        if not isinstance(other, RuleMatch):
-            return NotImplemented
-
-        return self.__hash_values == other.__hash_values
 
     def __str__(self):
         return str(self.macro)
@@ -170,6 +156,7 @@ def match_macro_rules(
     rules: RuleContainer,
     macro_name: str,
     macro_rule_templates: List[RuleTemplate],
+    conditions: Tuple[ArgCondition, ...],
     all_rule_matches: List[RuleMatch],
     rule_match_cache: Dict[Hashable, List[Rule]],
     verbose: bool,
@@ -182,18 +169,37 @@ def match_macro_rules(
 
     rule_matches: List[RuleMatch] = []
 
-    arity = max(m.arity for m in macro_rule_templates)
+    arity = max(
+        [
+            *(m.arity for m in macro_rule_templates),
+            *(c.arg_index for c in conditions),
+        ]
+    )
+    arg_values = ArgValues.empty(arity)
+    for condition in conditions:
+        if condition.equal:
+            arg_values.with_item(condition.arg_index, condition.value)
+
     match_macro_rule(
         rules,
         macro_rule_templates,
         0,
         macro_name,
         [],
-        ArgValues.empty(arity),
+        arg_values,
         rule_matches,
         rule_match_cache,
         verbose,
     )
+
+    rule_matches = [
+        rule_match
+        for rule_match in rule_matches
+        if all(
+            c.equal or rule_match.arg_values.get(c.arg_index) != c.value
+            for c in conditions
+        )
+    ]
 
     all_rule_matches.extend(rule_matches)
 
@@ -206,13 +212,13 @@ def match_macro_rules(
 
 def match_macros_rules(
     rules: RuleContainer,
-    macros_name_rules: List[Tuple[str, List[Rule]]],
+    macros_name_rules: List[MacroVariant],
     verbose: bool,
 ):
     rule_matches: List[RuleMatch] = []
     rule_match_cache: Dict[Hashable, List[Rule]] = {}
 
-    for macro_name, macro_rules in macros_name_rules:
+    for macro_name, macro_rules, conditions in macros_name_rules:
         macro_rule_templates: List[RuleTemplate] = [
             compile_rule_template(r) for r in macro_rules
         ]
@@ -228,6 +234,7 @@ def match_macros_rules(
             rules,
             macro_name,
             macro_rule_templates,
+            conditions,
             rule_matches,
             rule_match_cache,
             verbose,
@@ -286,9 +293,6 @@ def discard_rule_matches(
         rule_match_str = str(rule_match.macro)
         discarded = False
         for candidate in candidate_supersets:
-            if candidate.rules < rule_match.rules:
-                continue
-
             if rule_match.rules == candidate.rules:
                 arg_diff = len(rule_match.arg_values) - len(
                     candidate.arg_values
@@ -324,6 +328,20 @@ def discard_rule_matches(
     return new_rule_matches
 
 
+def common_marks(body_rules: Iterable[Rule], rules: RuleContainer):
+    common: Optional[Set[LineMark]] = None
+    for rule in body_rules:
+        marks = rules.marks(rule)
+        if not marks:
+            continue
+
+        common = set(marks) if common is None else common & set(marks)
+        if not common:
+            break
+
+    return common
+
+
 def replace_macro_rules(
     rules: RuleContainer,
     all_rule_matches: List[RuleMatch],
@@ -339,19 +357,7 @@ def replace_macro_rules(
                 print(rule)
             print()
 
-        marks: Optional[Set[LineMark]] = None
-        for body_rule in rule_match.rules:
-            body_marks = rules.marks(body_rule)
-            if not body_marks:
-                continue
-
-            if marks is None:
-                marks = set(body_marks)
-            else:
-                marks = marks & set(body_marks)
-
-            if not marks:
-                break
+        marks = common_marks(rule_match.rules, rules)
 
         removed_count = rules.remove_many(rule_match.rules, optional=True)
         if not removed_count:
@@ -531,20 +537,10 @@ def device_marks(
     rules: RuleContainer,
     reference: RuleContainer,
 ):
-    common: Optional[Set[LineMark]] = None
-    for rule in rule_match.rules:
-        if rule in reference:
-            continue
-
-        marks = rules.marks(rule)
-        if not marks:
-            continue
-
-        common = set(marks) if common is None else common & set(marks)
-        if not common:
-            break
-
-    return common
+    return common_marks(
+        (rule for rule in rule_match.rules if rule not in reference),
+        rules,
+    )
 
 
 def select_macros_by_group(

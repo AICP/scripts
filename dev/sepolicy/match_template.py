@@ -12,10 +12,12 @@ from typing import (
     Set,
     Tuple,
     Union,
+    cast,
 )
 
 from sepolicy.conditional_type import ConditionalType
 from sepolicy.rule import Rule, rule_hash_value, rule_part
+from sepolicy.varargs import ArgVarargs
 
 
 class ArgValues:
@@ -23,7 +25,7 @@ class ArgValues:
 
     __slots__ = ('__values', '__len')
 
-    def __init__(self, values: List[Optional[rule_part]]):
+    def __init__(self, values: List[Optional[rule_hash_value]]):
         self.__values = values
         self.__len = len(values) - 1
 
@@ -54,7 +56,7 @@ class ArgValues:
     def get(self, index: int):
         return self.__values[index]
 
-    def with_item(self, index: int, value: Optional[rule_part]):
+    def with_item(self, index: int, value: Optional[rule_hash_value]):
         existing = self.__values[index]
 
         if existing is None:
@@ -111,7 +113,6 @@ class ConditionalTemplate(PartTemplate):
     negative_literals_set: FrozenSet[str]
     negative_templates: Tuple[Tuple[int, AnyStringTemplate], ...]
 
-    arg_indices: FrozenSet[int]
     is_all: bool
 
     @property
@@ -128,6 +129,7 @@ class RuleTemplate:
     rule: Rule
     literals: Tuple[Tuple[int, rule_part], ...]
     templates: Tuple[Tuple[int, PartTemplate], ...]
+    varargs: Optional[rule_hash_value]
 
     @property
     def num_parts(self):
@@ -136,6 +138,8 @@ class RuleTemplate:
     @property
     def arity(self):
         max_i = 0
+        if isinstance(self.varargs, ArgVarargs):
+            max_i = self.varargs.arg_index
         for _, t in self.templates:
             for i in t.arg_indices:
                 if i > max_i:
@@ -182,52 +186,17 @@ def compile_string_template(value: str):
     if literal_start < value_len:
         segments.append(value[literal_start:])
 
-    if len(segments) == 1:
-        # $1
-        arg_index = segments[0]
+    arg_positions = [i for i, s in enumerate(segments) if isinstance(s, int)]
+    if len(arg_positions) == 1:
+        position = arg_positions[0]
+        arg_index = segments[position]
         assert isinstance(arg_index, int)
         return AffixTemplate(
-            prefix='',
+            prefix=''.join(cast(List[str], segments[:position])),
             arg_index=arg_index,
-            suffix='',
+            suffix=''.join(cast(List[str], segments[position + 1 :])),
             arg_indices=frozenset((arg_index,)),
         )
-
-    if len(segments) == 2:
-        # $1_a
-        if isinstance(segments[0], int) and isinstance(segments[1], str):
-            arg_index = segments[0]
-            return AffixTemplate(
-                prefix='',
-                arg_index=arg_index,
-                suffix=segments[1],
-                arg_indices=frozenset((arg_index,)),
-            )
-
-        # a_$1
-        if isinstance(segments[0], str) and isinstance(segments[1], int):
-            arg_index = segments[1]
-            return AffixTemplate(
-                prefix=segments[0],
-                arg_index=arg_index,
-                suffix='',
-                arg_indices=frozenset((arg_index,)),
-            )
-
-    if len(segments) == 3:
-        # a_$1_b
-        if (
-            isinstance(segments[0], str)
-            and isinstance(segments[1], int)
-            and isinstance(segments[2], str)
-        ):
-            arg_index = segments[1]
-            return AffixTemplate(
-                prefix=segments[0],
-                arg_index=arg_index,
-                suffix=segments[2],
-                arg_indices=frozenset((arg_index,)),
-            )
 
     return StringTemplate(
         segments=tuple(segments),
@@ -235,18 +204,8 @@ def compile_string_template(value: str):
     )
 
 
-def fill_single_value_template(
-    template: SingleValueTemplate,
-    arg_values: ArgValues,
-):
-    return arg_values[template.arg_index]
-
-
 def _fill_affix_template(template: AffixTemplate, arg_values: ArgValues):
     arg_value = arg_values.get(template.arg_index)
-    if arg_value is None:
-        return None
-
     if not isinstance(arg_value, str):
         return None
 
@@ -299,9 +258,6 @@ def compile_conditional_template_list(
 
 
 def compile_conditional_template(value: ConditionalType):
-    negative_literals: List[Tuple[int, str]] = []
-    negative_literals_set: Set[str] = set()
-    negative_templates: List[Tuple[int, AnyStringTemplate]] = []
     arg_indices: Set[int] = set()
 
     positive_literals, positive_literals_set, positive_templates = (
@@ -327,32 +283,48 @@ def compile_conditional_template(value: ConditionalType):
     )
 
 
+def fill_conditional_template_list(
+    size: int,
+    literals: Tuple[Tuple[int, str], ...],
+    templates: Tuple[Tuple[int, AnyStringTemplate], ...],
+    arg_values: ArgValues,
+):
+    parts: List[str] = [''] * size
+
+    for i, part in literals:
+        parts[i] = part
+
+    for i, part in templates:
+        filled = fill_string_template(part, arg_values)
+        if filled is None:
+            return None
+
+        parts[i] = filled
+
+    return parts
+
+
 def fill_conditional_template(
     template: ConditionalTemplate,
     arg_values: ArgValues,
 ):
-    positive: List[str] = [''] * template.num_positive
-    negative: List[str] = [''] * template.num_negative
+    positive = fill_conditional_template_list(
+        template.num_positive,
+        template.positive_literals,
+        template.positive_templates,
+        arg_values,
+    )
+    if positive is None:
+        return None
 
-    for i, part in template.positive_literals:
-        positive[i] = part
-
-    for i, part in template.negative_literals:
-        negative[i] = part
-
-    for i, part in template.positive_templates:
-        filled = fill_string_template(part, arg_values)
-        if filled is None:
-            return None
-
-        positive[i] = filled
-
-    for i, part in template.negative_templates:
-        filled = fill_string_template(part, arg_values)
-        if filled is None:
-            return None
-
-        negative[i] = filled
+    negative = fill_conditional_template_list(
+        template.num_negative,
+        template.negative_literals,
+        template.negative_templates,
+        arg_values,
+    )
+    if negative is None:
+        return None
 
     return ConditionalType(positive, negative, template.is_all)
 
@@ -360,8 +332,6 @@ def fill_conditional_template(
 def compile_rule_template(rule: Rule):
     literals: List[Tuple[int, rule_part]] = []
     templates: List[Tuple[int, PartTemplate]] = []
-
-    arg_indices: Set[int] = set()
 
     for i, part in enumerate(rule.parts):
         if isinstance(part, str):
@@ -378,12 +348,12 @@ def compile_rule_template(rule: Rule):
             continue
 
         templates.append((i, compiled_part))
-        arg_indices.update(compiled_part.arg_indices)
 
     return RuleTemplate(
         rule=rule,
         literals=tuple(literals),
         templates=tuple(templates),
+        varargs=rule.varargs,
     )
 
 
@@ -403,7 +373,7 @@ def fill_rule_template(rule_template: RuleTemplate, arg_values: ArgValues):
             continue
 
         if isinstance(part, SingleValueTemplate):
-            part = fill_single_value_template(part, arg_values)
+            part = arg_values[part.arg_index]
             assert isinstance(part, (str, ConditionalType))
         elif isinstance(part, (AffixTemplate, StringTemplate)):
             part = fill_string_template(part, arg_values)
@@ -421,10 +391,15 @@ def fill_rule_template(rule_template: RuleTemplate, arg_values: ArgValues):
 
         literals.append((i, part))
 
+    varargs = rule_template.varargs
+    if isinstance(varargs, ArgVarargs) and arg_values.has(varargs.arg_index):
+        varargs = arg_values.get(varargs.arg_index)
+
     return RuleTemplate(
         rule=rule_template.rule,
         literals=tuple(literals),
         templates=tuple(templates),
+        varargs=varargs,
     )
 
 
@@ -434,10 +409,14 @@ def rule_template_match_keys(rule_template: RuleTemplate):
     for i, part in rule_template.literals:
         parts[i] = part
 
+    varargs = rule_template.varargs
+    if isinstance(varargs, ArgVarargs):
+        varargs = None
+
     return (
         rule_template.rule.rule_type,
         *parts,
-        rule_template.rule.varargs,
+        varargs,
     )
 
 
@@ -500,6 +479,9 @@ def _iter_string_template_arg_values(
             arg_values.pop_item(arg_index, pop)
 
             search_start = next_pos + 1
+
+    if value_index == len(value):
+        yield arg_values
 
 
 def _iter_affix_template_arg_values(
@@ -706,17 +688,14 @@ def iter_rule_fill_arg_values(
     arg_values: ArgValues,
     matched_rule: Rule,
 ) -> Iterator[ArgValues]:
-    if matched_rule.rule_type != rule_template.rule.rule_type:
+    varargs = rule_template.varargs
+    if not isinstance(varargs, ArgVarargs) and matched_rule.varargs != varargs:
         return
 
-    if matched_rule.varargs != rule_template.rule.varargs:
-        return
-
-    if len(matched_rule.parts) != rule_template.num_parts:
-        return
-
-    for i, part in rule_template.literals:
-        if matched_rule.parts[i] != part:
+    pop = None
+    if isinstance(varargs, ArgVarargs):
+        pop = arg_values.with_item(varargs.arg_index, matched_rule.varargs)
+        if pop is None:
             return
 
     yield from _iter_rule_fill_arg_values(
@@ -725,6 +704,9 @@ def iter_rule_fill_arg_values(
         matched_parts=matched_rule.parts,
         arg_values=arg_values,
     )
+
+    if isinstance(varargs, ArgVarargs):
+        arg_values.pop_item(varargs.arg_index, pop)
 
 
 def rule_template_sort_key(rule_template: RuleTemplate):

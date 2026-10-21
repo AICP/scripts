@@ -9,6 +9,7 @@ from typing import (
     Dict,
     FrozenSet,
     Generator,
+    Iterable,
     List,
     Optional,
     Set,
@@ -19,6 +20,7 @@ from typing import (
 from sepolicy.class_set import ClassSet
 from sepolicy.conditional_type import ConditionalType
 from sepolicy.varargs import (
+    ArgVarargs,
     Ioctls,
     OrderedPerms,
     Perms,
@@ -26,7 +28,7 @@ from sepolicy.varargs import (
     TypeTransitionTag,
 )
 
-macro_argument_regex = re.compile(r'\$(\d+)')
+generated_type_regex = re.compile(r'[a-z_]+_typeattr_\d+')
 
 
 @cache
@@ -48,6 +50,7 @@ raw_parts_list = List[raw_part]
 rule_part = Union[str, ConditionalType, ClassSet]
 rule_hash_value = Union[
     rule_part,
+    ArgVarargs,
     OrderedPerms,
     Perms,
     Ioctls,
@@ -60,7 +63,7 @@ def is_type_generated(part: rule_part):
     if not isinstance(part, str):
         return False
 
-    return part.startswith('base_typeattr_')
+    return generated_type_regex.match(part) is not None
 
 
 def unpack_line(
@@ -184,6 +187,21 @@ def get_class_name_perms(
     return class_name_perms
 
 
+def format_macro_arg(
+    part: rule_hash_value,
+    ioctls: Optional[List[Tuple[str, Ioctls]]],
+    ioctl_defines: Optional[Dict[int, str]],
+):
+    if not isinstance(part, Ioctls):
+        return str(part)
+
+    formatted = part.format(ioctls=ioctls, ioctl_defines=ioctl_defines)
+    if formatted.startswith('{ ') and formatted.endswith(' }'):
+        formatted = formatted[2:-2]
+
+    return formatted
+
+
 def format_rule(
     rule: Rule,
     class_perms: Optional[Dict[str, List[Tuple[str, Set[str]]]]] = None,
@@ -224,9 +242,11 @@ def format_rule(
             | RuleType.NEVERALLOWXPERM
             | RuleType.DONTAUDITXPERM
         ):
-            assert isinstance(rule.varargs, Ioctls)
+            assert isinstance(rule.varargs, (Ioctls, ArgVarargs))
 
-            if rule.parts[3] == 'ioctl':
+            if isinstance(rule.varargs, ArgVarargs):
+                varargs_str = f'{{ {rule.varargs} }}'
+            elif rule.parts[3] == 'ioctl':
                 varargs_str = rule.varargs.format(
                     ioctls=ioctls,
                     ioctl_defines=ioctl_defines,
@@ -260,7 +280,7 @@ def format_rule(
             )
         case RuleType.TYPE_TRANSITION:
             if isinstance(rule.varargs, TypeTransitionTag):
-                name = f'{rule.varargs} '
+                name = f' {rule.varargs}'
             elif rule.varargs is None:
                 name = ''
             else:
@@ -271,8 +291,8 @@ def format_rule(
                 rule.parts[0],
                 rule.parts[1],
                 rule.parts[2],
-                name,
                 rule.parts[-1],
+                name,
             )
         case RuleType.GENFSCON:
             return '{} {} {} {}{}{}'.format(
@@ -292,7 +312,9 @@ def format_rule(
             return f'{rule.rule_type} {parts_str};'
         case _:
             assert rule.is_macro
-            parts_str = ', '.join(map(str, rule.parts))
+            parts_str = ', '.join(
+                format_macro_arg(p, ioctls, ioctl_defines) for p in rule.parts
+            )
             return f'{rule.rule_type}({parts_str})'
 
 
@@ -306,6 +328,7 @@ class Rule:
                 Perms,
                 OrderedPerms,
                 Ioctls,
+                ArgVarargs,
                 TypeTransitionTag,
                 Types,
             ]
@@ -365,6 +388,14 @@ def rule_type_order(rule: Rule):
         return 1
 
 
+def atomic_rules(rule: Rule) -> Iterable[Rule]:
+    if rule.is_macro:
+        assert rule.expanded_rules is not None
+        return rule.expanded_rules
+
+    return (rule,)
+
+
 def _rule_used_types(rule: Rule, used_types: Set[str]):
     def handle_type(t: rule_part):
         if isinstance(t, str):
@@ -403,35 +434,20 @@ def _rule_used_types(rule: Rule, used_types: Set[str]):
 def rule_used_types(rule: Rule):
     used_types: Set[str] = set()
 
-    if rule.is_macro:
-        assert rule.expanded_rules is not None
-        for r in rule.expanded_rules:
-            _rule_used_types(r, used_types)
-    else:
-        _rule_used_types(rule, used_types)
+    for r in atomic_rules(rule):
+        _rule_used_types(r, used_types)
 
     return used_types
-
-
-def _rule_defined_types(
-    rule: Rule,
-    defined_types: Set[str],
-):
-    if rule.rule_type != RuleType.TYPE:
-        return None
-
-    assert isinstance(rule.parts[0], str)
-    defined_types.add(rule.parts[0])
 
 
 def rule_defined_types(rule: Rule):
     defined_types: Set[str] = set()
 
-    if rule.is_macro:
-        assert rule.expanded_rules is not None
-        for r in rule.expanded_rules:
-            _rule_defined_types(r, defined_types)
-    else:
-        _rule_defined_types(rule, defined_types)
+    for r in atomic_rules(rule):
+        if r.rule_type != RuleType.TYPE:
+            continue
+
+        assert isinstance(r.parts[0], str)
+        defined_types.add(r.parts[0])
 
     return defined_types

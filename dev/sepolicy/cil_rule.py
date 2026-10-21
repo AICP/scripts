@@ -54,7 +54,6 @@ def create_conditional_type(version_suffix: str, parts: raw_parts_list):
         and isinstance(parts[2], list)
         and parts[2][0] == 'not'
     ):
-        assert isinstance(parts[2], list), parts
         parts.append(parts[2][1])
         parts[2] = parts[2][0]
 
@@ -77,41 +76,21 @@ def create_conditional_type(version_suffix: str, parts: raw_parts_list):
         assert group[0] in ['and', 'not'], parts
         assert isinstance(group[1], list), parts
 
-        # Type narrowing
-        new_group: List[str] = []
-        for t in group[1]:
-            if isinstance(t, str):
-                new_group.append(t)
-                continue
-
+        new_types = [
+            t.removesuffix(version_suffix)
+            for t in group[1]
+            if isinstance(t, str)
+        ]
+        if len(new_types) != len(group[1]):
             color_print('Ignored conditional type: ', parts, color=Color.YELLOW)
             return None
 
-        new_types = map(
-            lambda t: t.removesuffix(version_suffix),
-            new_group,
-        )
         if group[0] == 'and':
             positive.extend(new_types)
-        elif group[0] == 'not':
+        else:
             negative.extend(new_types)
 
     return ConditionalType(positive, negative, False)
-
-
-def is_valid_cil_line(line: str):
-    line = line.strip()
-
-    if not line:
-        return False
-
-    if line.startswith('#'):
-        return False
-
-    if line.startswith(';'):
-        return False
-
-    return True
 
 
 def unpack_ioctls(parts: raw_parts_list):
@@ -205,15 +184,11 @@ unknown_rule_types: Set[str] = set(
 
 
 def unpack_cil_line(line: str):
-    # Skip comments and empty lines
-    if not is_valid_cil_line(line):
+    stripped = line.strip()
+    if not stripped or stripped[0] in ('#', CIL_COMMENT_MARKER):
         return None
 
-    parts = unpack_line(line, '(', ')', ' ')
-    if not parts:
-        return None
-
-    return parts
+    return unpack_line(line, '(', ')', ' ') or None
 
 
 class CilRuleParser:
@@ -289,15 +264,6 @@ class CilRuleParser:
                 | RuleType.AUDITALLOW
                 | RuleType.DONTAUDIT
             ):
-                # Remove allow $3 $1:process sigchld as it is part of an ifelse
-                # statement based on one of the parameters and it is not
-                # possible to generate the checks for it as part of macro
-                # expansion
-                # TODO: implement this properly by allowing macros to have
-                # conditional rules based on input params
-                if len(parts) == 4 and parts[3] == ['process', ['sigchld']]:
-                    return
-
                 # (allow a b (c (...)))
                 assert len(parts) == 4, line
                 assert len(parts[3]) == 2, line
@@ -425,7 +391,7 @@ class CilRuleParser:
                 self.add_genfs_rule(rule)
             case CilRuleType.TYPETRANSITION:
                 # (typetransition a b c d)
-                # (typetransition a b c "[userfaultfd]" d)
+                # (typetransition a b c "name" d)
                 assert len(parts) in [5, 6], line
                 assert isinstance(parts[1], str), line
                 assert isinstance(parts[2], str), line
@@ -434,7 +400,6 @@ class CilRuleParser:
 
                 if len(parts) == 6:
                     assert isinstance(parts[4], str), line
-                    # assert parts[4] == '"[userfaultfd]"', line
                     tag = TypeTransitionTag(parts[4])
                 else:
                     tag = None

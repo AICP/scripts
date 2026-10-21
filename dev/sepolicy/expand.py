@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import functools
+import re
 import subprocess
 from pathlib import Path
 from typing import (
@@ -11,11 +12,16 @@ from typing import (
     Iterable,
     List,
     Optional,
-    TypeGuard,
     TypeVar,
 )
 
-from sepolicy.macro import macro_arity, macro_name
+from sepolicy.macro import (
+    ARG_ELSE_MARKER,
+    ARG_END_MARKER,
+    ARG_IFELSE_MARKER,
+    macro_arity,
+    macro_name,
+)
 from utils.frozendict import FrozenDict
 
 
@@ -36,6 +42,22 @@ def quote_char(c: str):
     change = 'changequote([,])'
     unchange = "changequote(`,')"
     return f'{change}[{change}{c}{unchange}]{unchange}'
+
+
+# An ifelse() comparing a macro argument cannot be evaluated while macros are
+# expanded with placeholder arguments. Emit both branches between markers.
+ARG_IFELSE_DEFINITIONS = f"""
+define(`arg_ifelse', `ifelse(substr(`$1', 0, 1), `$', `arg_ifelse_branches(`$1', `$2', `$3', `$4')', `ifelse(`$1', `$2', `$3', `$4')')')
+define(`arg_ifelse_branches', `
+{ARG_IFELSE_MARKER} $1 $2
+$3
+{ARG_ELSE_MARKER}
+$4
+{ARG_END_MARKER}
+')
+"""
+
+arg_ifelse_pattern = re.compile(r'\bifelse\((?=\$[1-9])')
 
 
 def expand_macro_calls(
@@ -65,13 +87,11 @@ define(`quote', `quote_start()`'$1`'quote_end()')
 define(`divert', `')
 """
 
-    # TODO: keep ifelse calls that use the macro arguments ($1) so that it can
-    # be later evaluated as a conditional rule
-    # This us needed for domain_trans() which does
-    # ifelse($1, `init', `', `allow $3 $1:process sigchld;')
-
     text_parts: List[str] = []
     if preserve_macros:
+        input_text += ARG_IFELSE_DEFINITIONS
+        texts = [arg_ifelse_pattern.sub('arg_ifelse(', t) for t in texts]
+
         for text in texts:
             name = macro_name(text)
             if name is None:
@@ -117,10 +137,6 @@ define(`divert', `')
 T = TypeVar('T')
 
 
-def not_none(x: Optional[T]) -> TypeGuard[T]:
-    return x is not None
-
-
 def expand_macro_calls_and_split(
     texts: List[str],
     environment_texts: List[str],
@@ -147,9 +163,5 @@ def expand_macro_calls_and_split(
         verbose,
     )
 
-    return list(
-        filter(
-            not_none,
-            map(map_fn, split_fn(expanded_text)),
-        )
-    )
+    mapped = map(map_fn, split_fn(expanded_text))
+    return [value for value in mapped if value is not None]

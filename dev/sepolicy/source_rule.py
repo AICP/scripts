@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from itertools import product
 from typing import Callable, Dict, List, Set, Tuple
 
@@ -16,7 +17,9 @@ from sepolicy.rule import (
     trim_contexts_label,
     unpack_line,
 )
-from sepolicy.varargs import Ioctls, Perms, TypeTransitionTag
+from sepolicy.varargs import ArgVarargs, Ioctls, Perms, TypeTransitionTag
+
+arg_varargs_pattern = re.compile(r'\$([1-9][0-9]*)')
 
 
 def trim_ioctl(ioctl: int):
@@ -28,14 +31,6 @@ def trim_ioctl_str(ioctl_str: str):
     return trim_ioctl(int(ioctl_str, base=0))
 
 
-def format_ioctl(ioctl: int):
-    return hex(trim_ioctl(ioctl))
-
-
-def format_ioctl_str(ioctl_str: str):
-    return format_ioctl(int(ioctl_str, base=0))
-
-
 def unpack_negative_ioctls(ioctls: List[str]):
     ranges: List[Tuple[int, int]] = []
 
@@ -43,9 +38,6 @@ def unpack_negative_ioctls(ioctls: List[str]):
 
     prev = -1
     for m in missing:
-        if m < prev:
-            raise ValueError('missing ioctls must be sorted and unique')
-
         if prev + 1 <= m - 1:
             ranges.append((prev + 1, m - 1))
 
@@ -62,15 +54,12 @@ def unpack_ioctls(ioctls: List[str]):
 
     for part in ioctls:
         if '-' not in part:
-            value = trim_ioctl(int(part, base=0))
+            value = trim_ioctl_str(part)
             ranges.append((value, value))
             continue
 
         start_s, end_s = part.split('-', 1)
-        start = trim_ioctl(int(start_s, base=0))
-        end = trim_ioctl(int(end_s, base=0))
-
-        ranges.append((start, end))
+        ranges.append((trim_ioctl_str(start_s), trim_ioctl_str(end_s)))
 
     return Ioctls(ranges)
 
@@ -188,19 +177,6 @@ class SourceRuleParser:
                 | RuleType.AUDITALLOW
                 | RuleType.DONTAUDIT
             ):
-                # Remove allow $3 $1:process sigchld as it is part of an ifelse
-                # statement based on one of the parameters and it is not
-                # possible to generate the checks for it as part of macro
-                # expansion
-                # TODO: implement this properly by allowing macros to have
-                # conditional rules based on input params
-                if (
-                    len(parts) == 5
-                    and parts[3] == 'process'
-                    and parts[4] == 'sigchld'
-                ):
-                    return
-
                 # neverallow ~{ a b } c:d e;
                 negative_srcs = False
                 if len(parts) > 5 and parts[1] == '~':
@@ -251,7 +227,9 @@ class SourceRuleParser:
                         class_varargs = varargs
                         class_is_all = class_varargs == class_perms_set
 
-                    class_varargs_map[class_name] = Perms(class_varargs, class_is_all)
+                    class_varargs_map[class_name] = Perms(
+                        class_varargs, class_is_all
+                    )
 
                 for src, dst, class_name in product(srcs, dsts, class_names):
                     rule = Rule(
@@ -268,10 +246,8 @@ class SourceRuleParser:
                 dsts = structure_conditional_types(parts[2])
                 class_names = flatten_parts(parts[3])
 
-                # Optional string for userfaultfd
                 if len(parts) == 6:
                     assert isinstance(parts[5], str), line
-                    # assert parts[5] == '"[userfaultfd]"', line
                     tag = TypeTransitionTag(parts[5])
                 else:
                     tag = None
@@ -298,7 +274,14 @@ class SourceRuleParser:
                     ioctls = unpack_negative_ioctls(varargs)
                 else:
                     varargs = list(flatten_parts(parts[5]))
-                    ioctls = unpack_ioctls(varargs)
+                    arg_match = None
+                    if len(varargs) == 1:
+                        arg_match = arg_varargs_pattern.fullmatch(varargs[0])
+
+                    if arg_match is not None:
+                        ioctls = ArgVarargs(int(arg_match.group(1)))
+                    else:
+                        ioctls = unpack_ioctls(varargs)
 
                 srcs = structure_conditional_types(parts[1])
                 dsts = structure_conditional_types(parts[2])

@@ -79,16 +79,6 @@ def get_needed_build_flags(flagging_bp_path: Path) -> FrozenSet[str]:
     return frozenset(flags)
 
 
-def get_build_prop(lines: List[str], prop_name: str):
-    prop_name_eq = f'{prop_name}='
-
-    for line in lines:
-        if line.startswith(prop_name_eq):
-            return line[len(prop_name_eq) :]
-
-    assert False, f'Failed to find build prop: {prop_name}'
-
-
 def sdk_value_to_version(sdk_value: str):
     # TODO: find the proper value
     if sdk_value == '36':
@@ -138,8 +128,20 @@ def read_build_prop_lines(build_prop_path: Path):
     return build_prop_path.read_text().splitlines()
 
 
+def find_build_prop(build_prop_path: Path, name: str) -> Optional[str]:
+    name_eq = f'{name}='
+
+    for line in read_build_prop_lines(build_prop_path):
+        if line.startswith(name_eq):
+            return line[len(name_eq) :]
+
+    return None
+
+
 def read_build_prop(build_prop_path: Path, name: str):
-    return get_build_prop(read_build_prop_lines(build_prop_path), name)
+    value = find_build_prop(build_prop_path, name)
+    assert value is not None, f'Failed to find build prop: {name}'
+    return value
 
 
 @cache
@@ -270,13 +272,25 @@ def parse_dump_policy_variables(
     # TARGET_BUILD_VARIANT
     variables['target_build_variant'] = build_type
 
-    try:
-        read_build_prop(platform_build_prop_path, 'ro.sanitize.address')
+    asan = find_build_prop(platform_build_prop_path, 'ro.sanitize.address')
+    if asan is not None:
         variables['target_with_asan'] = 'true'
-    except AssertionError:
-        pass
 
     return FrozenDict(variables)
+
+
+def get_dump_policy_metadata(
+    dump_root: Path,
+    version_source: PolicyVersionSource,
+    recovery: bool = False,
+):
+    version = get_dump_policy_version(dump_root, version_source)
+    variables = parse_dump_policy_variables(
+        dump_root,
+        version=version,
+        recovery=recovery,
+    )
+    return PolicyMetadata(version, variables)
 
 
 def _parse_cil_lines(
@@ -292,34 +306,29 @@ def _parse_cil_lines(
 ):
     mergeable_rules: List[Rule] = []
     mergeable_marks: Set[LineMark] = set()
-    current_mark: List[Optional[LineMark]] = [None]
+    current_mark: Optional[LineMark] = None
 
     def add_rule(rule: Rule):
         add_mergeable_rule(
             rule,
-            current_mark[0],
+            current_mark,
             mergeable_rules,
             mergeable_marks,
             rules,
         )
 
-    def add_genfs_rule(rule: Rule):
-        genfs_rules.add(rule)
-
     parser = CilRuleParser(
         conditional_types_map=conditional_types_map,
         reference_conditional_types_maps=reference_conditional_types_maps,
         add_rule=add_rule,
-        add_genfs_rule=add_genfs_rule,
+        add_genfs_rule=genfs_rules.add,
         version=version,
         allowed_types=allowed_types,
         disallowed_types=disallowed_types,
         classmap=classmap,
     )
 
-    for line in line_parts_list:
-        text, parts, mark = line
-        current_mark[0] = mark
+    for text, parts, current_mark in line_parts_list:
         parser.parse_line(text, parts)
 
     merge_current_rules(mergeable_rules, mergeable_marks, rules)
@@ -399,9 +408,6 @@ def read_cil_lines(
     current_mark: Optional[LineMark] = None
 
     for line in cil_data.splitlines():
-        if not line:
-            continue
-
         if line.startswith(CIL_COMMENT_MARKER):
             if line.startswith(LMX_PREFIX):
                 number, path = line[len(LMX_PREFIX) :].split(' ', 1)
@@ -462,17 +468,12 @@ def parse_dump_policy_rules(
     origin = policy_type.origin
     assert isinstance(origin, PolicyDumpCilOrigin)
 
-    version = get_dump_policy_version(
-        dump_root,
-        origin.version_source,
-    )
-
     genfs_rules = RuleContainer()
     rules = RuleContainer()
     conditional_types_map: Dict[str, ConditionalType] = {}
     reference_conditional_types_maps: List[Dict[str, ConditionalType]] = []
 
-    for environment_type in origin.needed or ():
+    for environment_type in origin.needed:
         environment_policy = policy_index.get(
             environment_type,
             metadata,
@@ -515,7 +516,7 @@ def parse_dump_policy_rules(
         conditional_types_map,
         reference_conditional_types_maps,
         classmap=classmap,
-        version=version,
+        version=metadata.version,
         name=policy_type.pretty_name,
         verbose=verbose,
     )

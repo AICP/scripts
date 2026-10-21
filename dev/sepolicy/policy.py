@@ -70,37 +70,33 @@ class PolicyOrigin:
 
 @dataclass(frozen=True)
 class PolicySourceOrigin(PolicyOrigin):
-    rules_subdirs: Optional[
+    rules_subdirs: Tuple[
         Tuple[
-            Tuple[
-                # subdir
-                str,
-                # versioned
-                bool,
-            ],
-            ...,
-        ]
-    ] = None
-    macros_subdirs: Optional[
+            # subdir
+            str,
+            # versioned
+            bool,
+        ],
+        ...,
+    ] = ()
+    macros_subdirs: Tuple[
         Tuple[
-            Tuple[
-                # subdir
-                str,
-                # versioned
-                bool,
-            ],
-            ...,
-        ]
-    ] = None
-    macro_sources: Optional[Tuple[PolicyType, ...]] = None
+            # subdir
+            str,
+            # versioned
+            bool,
+        ],
+        ...,
+    ] = ()
+    macro_sources: Tuple[PolicyType, ...] = ()
     contexts_name_map: Optional[FrozenDict[ContextsType, str]] = None
 
 
 @dataclass(frozen=True)
 class PolicyCombinedOrigin(PolicyOrigin):
-    macro_sources: Optional[Tuple[PolicyType, ...]] = None
-    rule_sources: Optional[Tuple[PolicyType, ...]] = None
-    attribute_sources: Optional[Tuple[PolicyType, ...]] = None
+    macro_sources: Tuple[PolicyType, ...] = ()
+    rule_sources: Tuple[PolicyType, ...] = ()
+    attribute_sources: Tuple[PolicyType, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -131,19 +127,30 @@ class PolicyDumpCilOrigin(PolicyDumpOrigin):
     classmap_source: Optional[PolicyType] = None
     contexts_name_map: Optional[FrozenDict[ContextsType, str]] = None
     # Needed at parse time
-    needed: Optional[Tuple[PolicyType, ...]] = None
+    needed: Tuple[PolicyType, ...] = ()
 
 
 @dataclass(frozen=True)
 class PolicyDumpBinaryOrigin(PolicyDumpOrigin):
-    file_name: Optional[str] = None
-    recovery: Optional[bool] = False
+    file_name: str
+    recovery: bool = False
 
 
 @dataclass(frozen=True)
-class PolicyCleanupOrigin(PolicyOrigin):
+class PolicySourceMetadataOrigin(PolicyOrigin):
     source: PolicyType
+
+
+@dataclass(frozen=True)
+class PolicyCleanupOrigin(PolicySourceMetadataOrigin):
     removed: Tuple[PolicyType, ...]
+    covered: Tuple[PolicyType, ...] = ()
+
+
+@dataclass(frozen=True)
+class PolicyRestoreOptimizedOrigin(PolicySourceMetadataOrigin):
+    macros: PolicyType
+    reference: PolicyType
 
 
 @dataclass(frozen=True)
@@ -152,40 +159,36 @@ class PolicyHardcodedOrigin(PolicyOrigin):
 
 
 @dataclass(frozen=True)
-class PolicyReferencedOrigin(PolicyOrigin):
-    source: PolicyType
+class PolicyReferencedOrigin(PolicySourceMetadataOrigin):
     reference: PolicyType
     in_or_out: bool
 
 
 @dataclass(frozen=True)
-class PolicyMacroMatchOrigin(PolicyOrigin):
-    source: PolicyType
+class PolicyMacroMatchOrigin(PolicySourceMetadataOrigin):
     macros: PolicyType
     references: Tuple[PolicyType, ...] = ()
 
 
 @dataclass(frozen=True)
-class PolicyMacroReplaceOrigin(PolicyOrigin):
-    source: PolicyType
+class PolicyMacroReplaceOrigin(PolicySourceMetadataOrigin):
+    pass
 
 
 @dataclass(frozen=True)
-class PolicyGatherSourceTextOrigin(PolicyOrigin):
-    source: PolicyType
+class PolicyGatherSourceTextOrigin(PolicySourceMetadataOrigin):
+    pass
 
 
 @dataclass(frozen=True)
-class PolicyExpandedGuardOrigin(PolicyOrigin):
-    source: PolicyType
+class PolicyExpandedGuardOrigin(PolicySourceMetadataOrigin):
     expander_source: PolicyType
     reference: PolicyType
     guard: str
 
 
 @dataclass(frozen=True)
-class PolicyAddOrigin(PolicyOrigin):
-    source: PolicyType
+class PolicyAddOrigin(PolicySourceMetadataOrigin):
     added: PolicyType
     guard: str
 
@@ -258,8 +261,27 @@ class PolicyType:
             PolicyReferencedOrigin(self, reference, in_or_out=False),
         )
 
-    def cleanup(self, *, removed: Tuple[PolicyType, ...]) -> PolicyType:
-        return self.__child('clean', PolicyCleanupOrigin(self, removed))
+    def cleanup(
+        self,
+        *,
+        removed: Tuple[PolicyType, ...] = (),
+        covered: Tuple[PolicyType, ...] = (),
+    ) -> PolicyType:
+        return self.__child(
+            'clean',
+            PolicyCleanupOrigin(self, removed, covered),
+        )
+
+    def restore_optimized(
+        self,
+        *,
+        macros: PolicyType,
+        reference: PolicyType,
+    ) -> PolicyType:
+        return self.__child(
+            'restored',
+            PolicyRestoreOptimizedOrigin(self, macros, reference),
+        )
 
     def macro_replace(self) -> PolicyType:
         return self.__child('replaced', PolicyMacroReplaceOrigin(self))
@@ -305,8 +327,8 @@ def hardcoded(*, name: str, rules: Tuple[Rule, ...]):
 def source_te(
     *,
     name: str,
-    rules_subdirs: Optional[Tuple[Tuple[str, bool], ...]] = None,
-    macros_subdirs: Optional[Tuple[Tuple[str, bool], ...]] = None,
+    rules_subdirs: Tuple[Tuple[str, bool], ...] = (),
+    macros_subdirs: Tuple[Tuple[str, bool], ...] = (),
     macro_sources: Tuple[PolicyType, ...] = (),
     contexts: Optional[FrozenDict[ContextsType, str]] = None,
 ):
@@ -315,7 +337,7 @@ def source_te(
         PolicySourceOrigin(
             rules_subdirs=rules_subdirs,
             macros_subdirs=macros_subdirs,
-            macro_sources=macro_sources or None,
+            macro_sources=macro_sources,
             contexts_name_map=contexts,
         ),
     )
@@ -338,9 +360,9 @@ def combined(
     return PolicyType(
         f'{SOURCE_PREFIX}{name}',
         PolicyCombinedOrigin(
-            macro_sources=macro_sources or None,
-            rule_sources=rule_sources or None,
-            attribute_sources=attribute_sources or None,
+            macro_sources=macro_sources,
+            rule_sources=rule_sources,
+            attribute_sources=attribute_sources,
         ),
     )
 
@@ -387,7 +409,7 @@ def dump_cil(
             file_prefix=file_prefix,
             classmap_source=classmap_source,
             contexts_name_map=contexts,
-            needed=needed or None,
+            needed=needed,
         ),
     )
 
@@ -396,7 +418,7 @@ def dump_binary(
     *,
     name: str,
     version_source: PolicyVersionSource,
-    file_name: Optional[str] = None,
+    file_name: str,
     optional: bool = False,
     recovery: bool = False,
 ):
@@ -664,37 +686,44 @@ vendor_clean = vendor.macro_match(
 #
 
 
-def reference_gathered(clean: PolicyType) -> PolicyType:
-    return clean.macro_replace().gather_source_text()
-
-
-recovery_reference_gathered = (
-    reference_gathered(platform_public_clean),
-    reference_gathered(platform_private_clean),
-    reference_gathered(system_ext_public_clean),
-    reference_gathered(system_ext_private_clean),
-    reference_gathered(product_public_clean),
-    reference_gathered(product_private_clean),
-    reference_gathered(vendor_clean),
+SOURCE_RULE_POLICIES = (
+    source_platform_public,
+    source_platform_private,
+    source_system_ext_public,
+    source_system_ext_private,
+    source_product_public,
+    source_product_private,
+    source_vendor,
 )
-recovery_reference_combined = combined(
-    name='recovery_reference_combined',
-    macro_sources=(source_platform_public,),
-    attribute_sources=recovery_reference_gathered,
-    rule_sources=(
-        source_platform_public,
-        source_platform_private,
-        source_system_ext_public,
-        source_system_ext_private,
-        source_product_public,
-        source_product_private,
-        source_vendor,
-        *recovery_reference_gathered,
+
+PARTITION_CLEANS = (
+    platform_public_clean,
+    platform_private_clean,
+    system_ext_public_clean,
+    system_ext_private_clean,
+    product_public_clean,
+    product_private_clean,
+    vendor_clean,
+)
+
+
+def compiled_reference(name: str, gathered: Tuple[PolicyType, ...]):
+    return compiled(
+        name=f'{name}_compiled',
+        source=combined(
+            name=f'{name}_combined',
+            macro_sources=(source_platform_public,),
+            attribute_sources=gathered,
+            rule_sources=(*SOURCE_RULE_POLICIES, *gathered),
+        ),
+    )
+
+
+recovery_reference_compiled = compiled_reference(
+    'recovery_reference',
+    tuple(
+        clean.macro_replace().gather_source_text() for clean in PARTITION_CLEANS
     ),
-)
-recovery_reference_compiled = compiled(
-    name='recovery_reference_compiled',
-    source=recovery_reference_combined,
 )
 
 
@@ -714,13 +743,7 @@ def cleaned_output(clean: PolicyType) -> PolicyType:
 # Partition rules with the not_recovery() guard data in place
 #
 
-platform_public_guarded = guarded_replaced(platform_public_clean)
-platform_private_guarded = guarded_replaced(platform_private_clean)
-system_ext_public_guarded = guarded_replaced(system_ext_public_clean)
-system_ext_private_guarded = guarded_replaced(system_ext_private_clean)
-product_public_guarded = guarded_replaced(product_public_clean)
-product_private_guarded = guarded_replaced(product_private_clean)
-vendor_guarded = guarded_replaced(vendor_clean)
+partition_guarded = tuple(guarded_replaced(c) for c in PARTITION_CLEANS)
 
 cleaned_output(platform_public_clean).output_to(
     relative_dir='system/public',
@@ -748,33 +771,9 @@ cleaned_output(product_private_clean).output_to(
 # The recovery_only() rules will be added to vendor.
 #
 
-recovery_reference_guarded_gathered = (
-    platform_public_guarded.gather_source_text(),
-    platform_private_guarded.gather_source_text(),
-    system_ext_public_guarded.gather_source_text(),
-    system_ext_private_guarded.gather_source_text(),
-    product_public_guarded.gather_source_text(),
-    product_private_guarded.gather_source_text(),
-    vendor_guarded.gather_source_text(),
-)
-recovery_reference_guarded_combined = combined(
-    name='recovery_reference_guarded_combined',
-    macro_sources=(source_platform_public,),
-    attribute_sources=recovery_reference_guarded_gathered,
-    rule_sources=(
-        source_platform_public,
-        source_platform_private,
-        source_system_ext_public,
-        source_system_ext_private,
-        source_product_public,
-        source_product_private,
-        source_vendor,
-        *recovery_reference_guarded_gathered,
-    ),
-)
-recovery_reference_guarded_compiled = compiled(
-    name='recovery_reference_guarded_compiled',
-    source=recovery_reference_guarded_combined,
+recovery_reference_guarded_compiled = compiled_reference(
+    'recovery_reference_guarded',
+    tuple(guarded.gather_source_text() for guarded in partition_guarded),
 )
 recovery_reference_guarded = binary_compiled(
     name='recovery_reference_guarded',
@@ -783,8 +782,8 @@ recovery_reference_guarded = binary_compiled(
 
 recovery_only_replaced = (
     recovery.cleanup(
+        covered=(recovery_reference_guarded,),
         removed=(
-            recovery_reference_guarded,
             # For genfs contexts only
             platform,
             system_ext,
@@ -792,6 +791,10 @@ recovery_only_replaced = (
             versioned_platform,
             vendor,
         ),
+    )
+    .restore_optimized(
+        macros=source_platform_public,
+        reference=recovery,
     )
     .macro_match(
         macros=source_platform_public,
@@ -890,9 +893,6 @@ class PolicyProvider(ABC):
     ):
         self.__policy_origin = policy_origin
 
-    def can_provide(self, policy_type: PolicyType) -> bool:
-        return isinstance(policy_type.origin, self.__policy_origin)
-
     @property
     def policy_origin(self) -> Type[PolicyOrigin]:
         return self.__policy_origin
@@ -903,6 +903,10 @@ class PolicyProvider(ABC):
         policy_type: PolicyType,
         requested: Optional[PolicyMetadata],
     ) -> Optional[PolicyMetadata]:
+        origin = policy_type.origin
+        if isinstance(origin, PolicySourceMetadataOrigin):
+            return policy_index.resolve_metadata(origin.source, requested)
+
         return requested
 
     @abstractmethod

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import bisect
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 
@@ -39,12 +38,6 @@ class Perms:
         self.__is_all = is_all
         self.__hash = hash(Perms.__ALL if self.__is_all else self.__values)
 
-    def __contains__(self, value: str):
-        if self.__is_all:
-            return True
-
-        return value in self.__values
-
     def __eq__(self, other: object):
         if not isinstance(other, Perms):
             return NotImplemented
@@ -70,6 +63,25 @@ class Perms:
             return False
 
         return self.__values <= other.__values
+
+    def __or__(self, other: Perms):
+        return Perms(
+            self.__values | other.__values,
+            self.__is_all or other.__is_all,
+        )
+
+    def __sub__(self, other: Perms):
+        if other.__is_all:
+            return Perms((), False)
+
+        values = self.__values - other.__values
+        if values == self.__values:
+            return self
+
+        return Perms(values, False)
+
+    def is_empty(self):
+        return not self.__is_all and not self.__values
 
     def __is_star(self):
         # fd, property_service are 1-perm, lockdown is 2-perm, avoid replacing
@@ -143,6 +155,9 @@ class Types:
         return self.__hash
 
     def __str__(self):
+        if not self.__values:
+            return ''
+
         values = sorted(self.__values)
         values_str = ', '.join(values)
         return f', {values_str}'
@@ -166,11 +181,27 @@ class TypeTransitionTag:
         return self.__value
 
 
+class ArgVarargs:
+    def __init__(self, arg_index: int):
+        self.arg_index = arg_index
+
+    def __eq__(self, other: object):
+        if not isinstance(other, ArgVarargs):
+            return NotImplemented
+
+        return self.arg_index == other.arg_index
+
+    def __hash__(self):
+        return hash((ArgVarargs, self.arg_index))
+
+    def __str__(self):
+        return f'${self.arg_index}'
+
+
 class Ioctls:
     def __init__(self, ranges: Iterable[Tuple[int, int]]):
         self.__ranges = self._normalize_ranges(ranges)
-        self.__ranges_set = frozenset(self.__ranges)
-        self.__hash = hash(self.__ranges_set)
+        self.__hash = hash(self.__ranges)
 
     @staticmethod
     def _normalize_ranges(
@@ -197,6 +228,9 @@ class Ioctls:
     def merge(self, other: Ioctls):
         return Ioctls(self.__ranges + other.__ranges)
 
+    def is_empty(self):
+        return not self.__ranges
+
     def invert(self, start: int = 0x0000, end: int = 0xFFFF):
         result: List[Tuple[int, int]] = []
         cur = start
@@ -214,14 +248,6 @@ class Ioctls:
 
         return Ioctls(result)
 
-    def __contains__(self, value: int):
-        i = bisect.bisect_right(self.__ranges, value, key=lambda t: t[0]) - 1
-        if i >= 0:
-            start, end = self.__ranges[i]
-            return start <= value <= end
-
-        return False
-
     def __eq__(self, other: object):
         if not isinstance(other, Ioctls):
             return NotImplemented
@@ -229,7 +255,7 @@ class Ioctls:
         if self.__hash != other.__hash:
             return False
 
-        return self.__ranges_set == other.__ranges_set
+        return self.__ranges == other.__ranges
 
     def __le__(self, other: Ioctls) -> bool:
         i = j = 0

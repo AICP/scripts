@@ -39,6 +39,9 @@ from sepolicy.policy import (
     source_cleanup,
 )
 from sepolicy.referenced_policy_provider import ReferencedPolicyProvider
+from sepolicy.restore_optimized_policy_provider import (
+    RestoreOptimizedPolicyProvider,
+)
 from sepolicy.source_cil_policy_provider import SourceCilPolicyProvider
 from sepolicy.source_te_policy_provider import SourceTePolicyProvider
 
@@ -155,6 +158,7 @@ def decompile_cil():
     )
     policy_index.register(AddPolicyProvider())
     policy_index.register(CleanupPolicyProvider())
+    policy_index.register(RestoreOptimizedPolicyProvider())
     policy_index.register(
         CombinedPolicyProvider(
             verbose=verbose,
@@ -180,16 +184,8 @@ def decompile_cil():
             verbose=verbose,
         )
     )
-    policy_index.register(
-        GatherSourceTextPolicyProvider(
-            verbose=verbose,
-        )
-    )
-    policy_index.register(
-        ExpandedGuardPolicyProvider(
-            verbose=verbose,
-        )
-    )
+    policy_index.register(GatherSourceTextPolicyProvider())
+    policy_index.register(ExpandedGuardPolicyProvider())
 
     shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(parents=True, exist_ok=True)

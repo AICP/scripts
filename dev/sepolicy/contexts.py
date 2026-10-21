@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Tuple
 
 from sepolicy.policy import ContextsType
 from sepolicy.rule_container import RuleContainer
@@ -39,7 +39,6 @@ def remove_source_contexts(
     source_contexts: Dict[ContextsType, List[Tuple[str, ...]]],
 ):
     new_contexts: Dict[ContextsType, List[Tuple[str, ...]]] = {}
-    removed_rules = 0
 
     for contexts_type, contexts_rules in contexts.items():
         if contexts_type not in source_contexts:
@@ -47,17 +46,13 @@ def remove_source_contexts(
             continue
 
         source_contexts_rules_set = set(source_contexts[contexts_type])
-        new_contexts_rules: List[Tuple[str, ...]] = []
-        for rule in contexts_rules:
-            if rule in source_contexts_rules_set:
-                removed_rules += 1
-                continue
+        new_contexts[contexts_type] = [
+            rule
+            for rule in contexts_rules
+            if rule not in source_contexts_rules_set
+        ]
 
-            new_contexts_rules.append(rule)
-
-        new_contexts[contexts_type] = new_contexts_rules
-
-    return new_contexts, removed_rules
+    return new_contexts
 
 
 def output_contexts(
@@ -68,17 +63,9 @@ def output_contexts(
         if not contexts_rules:
             continue
 
-        unique_rules_set: Set[Tuple[str, ...]] = set()
-        joined_contexts: List[str] = []
-        for rule in contexts_rules:
-            if rule in unique_rules_set:
-                continue
-
-            unique_rules_set.add(rule)
-            joined_rule = f'{" ".join(rule)}\n'
-            joined_contexts.append(joined_rule)
-
-        joined_contexts.sort()
+        joined_contexts = sorted(
+            {f'{" ".join(rule)}\n' for rule in contexts_rules}
+        )
         output_text = ''.join(joined_contexts)
 
         output_contexts_path = output_dir / contexts_type
